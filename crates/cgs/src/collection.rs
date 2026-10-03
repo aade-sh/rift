@@ -300,6 +300,10 @@ impl<T: 'static> Table<T> {
         native.setAllowsEmptySelection(true);
         native.setAllowsMultipleSelection(false);
         native.setUsesAutomaticRowHeights(true);
+        native.setStyle(NSTableViewStyle::Inset);
+        native.setColumnAutoresizingStyle(
+            NSTableViewColumnAutoresizingStyle::LastColumnOnlyAutoresizingStyle,
+        );
         let rows = Rc::new(RefCell::new(Vec::new()));
         let r = rows.clone();
         let ui_copy = *ui;
@@ -319,6 +323,8 @@ impl<T: 'static> Table<T> {
         }
         let view: Retained<NSView> = native.clone().into_super().into_super();
         let scroll = ScrollView::new(ui, view);
+        scroll.ns_scroll_view().setDrawsBackground(true);
+        scroll.ns_scroll_view().setBorderType(NSBorderType::LineBorder);
         {
             let r = rows.clone();
             *bridge.ivars().reorder.borrow_mut() = Some(Box::new(move |from, to| {
@@ -393,8 +399,12 @@ impl<T: 'static> Table<T> {
     }
 
     pub fn on_select(self, f: impl FnMut(Option<usize>) + 'static) -> Self {
-        *self.bridge.ivars().selection.borrow_mut() = Some(Box::new(f));
+        self.set_on_select(f);
         self
+    }
+
+    pub fn set_on_select(&self, f: impl FnMut(Option<usize>) + 'static) {
+        *self.bridge.ivars().selection.borrow_mut() = Some(Box::new(f));
     }
 
     pub fn selectable(self, f: impl Fn(&T) -> bool + 'static) -> Self {

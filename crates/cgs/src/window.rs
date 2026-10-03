@@ -142,7 +142,7 @@ impl SettingsWindow {
             ))
             .autosave_frame(title);
         window.native.setTitlebarSeparatorStyle(NSTitlebarSeparatorStyle::Automatic);
-        window.native.setToolbarStyle(NSWindowToolbarStyle::UnifiedCompact);
+        window.native.setToolbarStyle(NSWindowToolbarStyle::Automatic);
         window.native.setTitleVisibility(NSWindowTitleVisibility::Hidden);
         window
             .native

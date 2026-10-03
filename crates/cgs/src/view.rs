@@ -218,7 +218,7 @@ impl Metrics {
     pub const PAGE_INSET: f64 = 20.0;
     pub const PAGE_TOP_INSET: f64 = 20.0;
     pub const ROW_SPACING: f64 = 6.0;
-    pub const SECTION_SPACING: f64 = 18.0;
+    pub const SECTION_SPACING: f64 = 16.0;
     pub const SIDEBAR_MIN_WIDTH: f64 = 160.0;
     pub const SIDEBAR_WIDTH: f64 = 200.0;
 }

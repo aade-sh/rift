@@ -157,7 +157,7 @@ fn action_name(cmd: &WmCommand) -> String {
     let title = actions()
         .into_iter()
         .find(|(_, a)| same_action(a, cmd))
-        .map(|(name, _)| name.to_string())
+        .map(|(name, _)| name.split_once(" · ").map_or(name, |(_, action)| action).to_string())
         .unwrap_or("Custom action (retained)".into());
     let argument = match cmd {
         WmCommand::ReactorCommand(Command::Layout(
@@ -173,7 +173,7 @@ fn action_name(cmd: &WmCommand) -> String {
     if argument.is_empty() {
         title
     } else {
-        format!("{title} · {argument}")
+        format!("{title} {argument}")
     }
 }
 fn keymap<'a>(s: &'a ConfigSource, mode: &str) -> Option<&'a BTreeMap<String, WmCommand>> {
@@ -237,14 +237,14 @@ pub(super) fn keyboard(ui: Ui, model: &Rc<Model>) -> Page {
     let mut f = FormBuilder::new(ui, model);
     let mode = Rc::new(RefCell::new("default".to_string()));
     let table = Table::<(String, String)>::new(&ui)
-        .column("shortcut", "Shortcut", 180.0)
-        .column("action", "Action", 380.0)
+        .column("shortcut", "Shortcut", 140.0)
+        .column("action", "Action", 360.0)
         .cells(move |(key, action), column| {
             Box::new(Label::new(&ui, if column == 0 { key } else { action }))
         });
     let weak_model = Rc::downgrade(model);
     let mode_edit = mode.clone();
-    let table = Rc::new(table.on_double_click(move |i| {
+    let edit_binding: Rc<dyn Fn(usize)> = Rc::new(move |i| {
         if let Some(model) = weak_model.upgrade() {
             let item = keymap(&model.source.borrow(), &mode_edit.borrow())
                 .and_then(|m| m.iter().nth(i).map(|(k, c)| (k.clone(), c.clone())));
@@ -252,8 +252,18 @@ pub(super) fn keyboard(ui: Ui, model: &Rc<Model>) -> Page {
                 binding_sheet(ui, &model, mode_edit.borrow().clone(), Some(key), cmd);
             }
         }
-    }));
-    table.height(360.0);
+    });
+    let action = edit_binding.clone();
+    let table = Rc::new(table.on_double_click(move |i| action(i)));
+    table.min_height(160.0);
+    table.ns_view().setContentCompressionResistancePriority_forOrientation(
+        1.0,
+        objc2_app_kit::NSLayoutConstraintOrientation::Vertical,
+    );
+    table.ns_view().setContentHuggingPriority_forOrientation(
+        1.0,
+        objc2_app_kit::NSLayoutConstraintOrientation::Vertical,
+    );
     let names = Rc::new(RefCell::new(vec!["default".to_string()]));
     let selected_mode = mode.clone();
     let mode_names = names.clone();
@@ -299,7 +309,7 @@ pub(super) fn keyboard(ui: Ui, model: &Rc<Model>) -> Page {
     }));
     let weak_model = Rc::downgrade(model);
     let selected_mode = mode.clone();
-    let add = Button::new(&ui, "Add Shortcut…").on_click(move || {
+    let controls = AddRemoveControl::new(&ui).on_add(move || {
         if let Some(model) = weak_model.upgrade() {
             binding_sheet(
                 ui,
@@ -310,18 +320,10 @@ pub(super) fn keyboard(ui: Ui, model: &Rc<Model>) -> Page {
             );
         }
     });
-    let weak_model = Rc::downgrade(model);
-    let selected_mode = mode.clone();
     let weak_table = Rc::downgrade(&table);
-    let edit = Button::new(&ui, "Edit…").on_click(move || {
-        if let (Some(model), Some(table)) = (weak_model.upgrade(), weak_table.upgrade()) {
-            if let Some(i) = table.selection() {
-                let item = keymap(&model.source.borrow(), &selected_mode.borrow())
-                    .and_then(|m| m.iter().nth(i).map(|(k, c)| (k.clone(), c.clone())));
-                if let Some((key, cmd)) = item {
-                    binding_sheet(ui, &model, selected_mode.borrow().clone(), Some(key), cmd);
-                }
-            }
+    let edit = IconButton::new(&ui, "pencil", "Edit Shortcut…").on_click(move || {
+        if let Some(i) = weak_table.upgrade().and_then(|table| table.selection()) {
+            edit_binding(i);
         }
     });
     let error = Rc::new(ValidationMessage::new(&ui));
@@ -329,7 +331,7 @@ pub(super) fn keyboard(ui: Ui, model: &Rc<Model>) -> Page {
     let weak_model = Rc::downgrade(model);
     let weak_table = Rc::downgrade(&table);
     let selected_mode = mode.clone();
-    let remove = Button::new(&ui, "Remove").on_click(move || {
+    let controls = Rc::new(controls.on_remove(move || {
         if let (Some(model), Some(table)) = (weak_model.upgrade(), weak_table.upgrade()) {
             if let Some(i) = table.selection() {
                 let name = selected_mode.borrow().clone();
@@ -347,22 +349,65 @@ pub(super) fn keyboard(ui: Ui, model: &Rc<Model>) -> Page {
                 }
             }
         }
+    }));
+    controls.set_remove_enabled(false);
+    edit.set_enabled(false);
+    let weak_controls = Rc::downgrade(&controls);
+    let weak_edit = objc2::rc::Weak::new(edit.ns_button());
+    table.set_on_select(move |selection| {
+        if let Some(controls) = weak_controls.upgrade() {
+            controls.set_remove_enabled(selection.is_some());
+        }
+        if let Some(edit) = weak_edit.load() {
+            edit.setEnabled(selection.is_some());
+        }
     });
-    let mut mode_controls = HStack::new(&ui).push(popup);
-    for (title, operation) in [("New Mode…", 0), ("Rename…", 1), ("Delete Mode…", 2)] {
+    let menu = Menu::new(&ui);
+    let mut managed = Vec::new();
+    for (title, operation) in [
+        ("New Keymap…", 0),
+        ("Rename Keymap…", 1),
+        ("Delete Keymap…", 2),
+    ] {
         let weak_model = Rc::downgrade(model);
         let mode = mode.clone();
-        mode_controls = mode_controls.push(Button::new(&ui, title).on_click(move || {
+        let item = MenuItem::new(&ui, title).on_click(move || {
             if let Some(model) = weak_model.upgrade() {
                 mode_sheet(ui, &model, mode.borrow().clone(), operation);
             }
-        }));
+        });
+        if operation != 0 {
+            managed.push(objc2::rc::Weak::new(item.ns_menu_item()));
+        }
+        menu.add(item);
     }
+    let current_mode = mode.clone();
+    let menu = menu.on_tracking(move |_| {
+        for item in &managed {
+            if let Some(item) = item.load() {
+                item.setEnabled(*current_mode.borrow() != "default");
+            }
+        }
+    });
+    let management = Popup::actions(&ui, "Keymap Actions", menu);
+    let mode_controls = HStack::new(&ui).push(popup).spacer(&ui).push(management);
     let combinations = modifier_combinations(&mut f, model);
-    f.finish(SettingsPage::new(&ui, "Keyboard").section(Section::new(&ui, "Keymap").row(mode_controls))
-        .section(Section::new(&ui, "Shortcuts").description("Select a row and choose Edit, or double-click. Press Escape to cancel recording.")
-            .content(table).content(HStack::new(&ui).push(add).push(edit).push(remove)).footer(error))
-        .section(Section::new(&ui, "").row(Disclosure::new(&ui, "Reusable modifier combinations", combinations))))
+    f.finish(
+        SettingsPage::new(&ui, "Keyboard")
+            .section(Section::new(&ui, "Keymap").content(mode_controls))
+            .section(
+                Section::new(&ui, "Shortcuts")
+                    .content(table)
+                    .content(HStack::new(&ui).push(controls).push(edit))
+                    .footer(error),
+            )
+            .section(Disclosure::new(
+                &ui,
+                "Reusable modifier combinations",
+                combinations,
+            ))
+            .into_editor(),
+    )
 }
 fn binding_rows(s: &ConfigSource, mode: &str) -> Vec<(String, String)> {
     keymap(s, mode)
@@ -498,7 +543,7 @@ fn binding_sheet(ui: Ui, model: &Rc<Model>, mode: String, old: Option<String>, c
             .push(SettingsRow::new(&ui, "Action", popup))
             .push(host)
             .push(message)
-            .push(HStack::new(&ui).push(cancel_button(ui, model)).push(save)),
+            .push(HStack::new(&ui).spacer(&ui).push(cancel_button(ui, model)).push(save)),
     );
 }
 
@@ -719,11 +764,12 @@ fn mode_sheet(ui: Ui, model: &Rc<Model>, old: String, operation: usize) {
         Button::new(
             &ui,
             if operation == 2 {
-                "Delete Mode"
+                "Delete Keymap"
             } else {
-                "Save Mode"
+                "Save"
             },
         )
+        .key_equivalent("\r")
         .on_click(move || {
             let (Some(input), Some(message)) = (weak_input.upgrade(), error.upgrade()) else {
                 return;
@@ -738,7 +784,7 @@ fn mode_sheet(ui: Ui, model: &Rc<Model>, old: String, operation: usize) {
                             || name == "default"
                             || s.binding_modes.contains_key(&name) && name != old)
                     {
-                        return Err("Choose a unique mode name".into());
+                        return Err("Choose a unique keymap name".into());
                     }
                     if operation == 0 {
                         s.binding_modes.insert(name, BTreeMap::new());
@@ -797,7 +843,7 @@ fn mode_sheet(ui: Ui, model: &Rc<Model>, old: String, operation: usize) {
     if operation == 2 {
         content = content.push(Label::new(
             &ui,
-            "Delete this mode and its shortcuts? References will switch to Default.",
+            "Delete this keymap and its shortcuts? References will switch to Default.",
         ));
     } else {
         content = content.push(SettingsRow::new(&ui, "Name", input));
@@ -808,7 +854,7 @@ fn mode_sheet(ui: Ui, model: &Rc<Model>, old: String, operation: usize) {
         "Keymap",
         content
             .push(message)
-            .push(HStack::new(&ui).push(cancel_button(ui, model)).push(save)),
+            .push(HStack::new(&ui).spacer(&ui).push(cancel_button(ui, model)).push(save)),
     );
 }
 fn modifier_combinations(f: &mut FormBuilder, model: &Rc<Model>) -> VStack {

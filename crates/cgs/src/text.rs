@@ -17,10 +17,12 @@ impl Font {
     pub fn caption() -> Retained<NSFont> { NSFont::systemFontOfSize(NSFont::smallSystemFontSize()) }
 
     pub fn title() -> Retained<NSFont> {
-        NSFont::systemFontOfSize_weight(22.0, unsafe { NSFontWeightBold })
+        NSFont::systemFontOfSize_weight(20.0, unsafe { NSFontWeightSemibold })
     }
 
-    pub fn section_title() -> Retained<NSFont> { Self::body_emphasized() }
+    pub fn section_title() -> Retained<NSFont> {
+        NSFont::systemFontOfSize_weight(NSFont::systemFontSize(), unsafe { NSFontWeightSemibold })
+    }
 
     pub fn subsection_title() -> Retained<NSFont> {
         NSFont::systemFontOfSize_weight(NSFont::smallSystemFontSize(), unsafe {
@@ -111,7 +113,7 @@ macro_rules! text_style {
 text_style!(SecondaryLabel, body, secondary_label);
 text_style!(Title, title, label);
 text_style!(SectionTitle, section_title, label);
-text_style!(SubsectionTitle, subsection_title, label);
+text_style!(SubsectionTitle, subsection_title, secondary_label);
 text_style!(Caption, caption, secondary_label);
 text_style!(MonospaceLabel, monospaced, label);
 text_style!(WrappingLabel, body, label);

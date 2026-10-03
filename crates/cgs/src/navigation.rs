@@ -81,9 +81,9 @@ impl<T: Clone + 'static> Sidebar<T> {
             .rows(items);
         table.ns_table_view().setHeaderView(None);
         table.ns_table_view().setStyle(NSTableViewStyle::SourceList);
-        table.ns_table_view().setUsesAutomaticRowHeights(false);
         table.ns_table_view().setBackgroundColor(&NSColor::clearColor());
         table.ns_scroll_view().setDrawsBackground(false);
+        table.ns_scroll_view().setBorderType(NSBorderType::NoBorder);
         table.min_width(content_width);
         table.max_width(content_width + Metrics::PAGE_INSET * 2.0);
         Self { table }
@@ -213,6 +213,7 @@ impl Toolbar {
                 init
             ]
         };
+        toolbar.native.setDisplayMode(NSToolbarDisplayMode::IconOnly);
         toolbar.native.setDelegate(Some(ProtocolObject::from_ref(&*delegate)));
         toolbar.delegate = Some(delegate);
         toolbar

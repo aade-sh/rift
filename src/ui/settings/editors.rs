@@ -17,6 +17,7 @@ fn master<T: Clone + PartialEq + 'static>(
 ) -> Page {
     let mut f = FormBuilder::new(ui, model);
     let host = Rc::new(PageHost::new(&ui));
+    host.set_page(SettingsPage::new(&ui, "").subtitle("Select an item to edit."));
     let selected = Rc::new(Cell::new(None));
     let current: Rc<RefCell<Option<Page>>> = Rc::new(RefCell::new(None));
     let weak_host = Rc::downgrade(&host);
@@ -78,7 +79,7 @@ fn master<T: Clone + PartialEq + 'static>(
         list
     };
     list.min_width(140.0);
-    list.height(400.0);
+    list.min_height(160.0);
     let list = Rc::new(list);
     let weak_list = Rc::downgrade(&list);
     let last: RefCell<Vec<T>> = RefCell::new(Vec::new());
@@ -101,9 +102,11 @@ fn master<T: Clone + PartialEq + 'static>(
         }
     }));
     let detail = MasterDetail::new(&ui, VStack::new(&ui).push(list).push(message), host);
-    detail.min_height(420.0);
-    let page = SettingsPage::new(&ui, title).section(detail);
-    page.min_height(460.0);
+    detail.min_height(260.0);
+    let page = SettingsPage::new(&ui, title).section(detail).into_editor();
+    if title.is_empty() {
+        page.min_height(360.0);
+    }
     f.finish(page)
 }
 
@@ -362,85 +365,231 @@ fn workspace_popup(
 }
 
 pub(super) fn rules(ui: Ui, model: &Rc<Model>) -> Page {
-    master(
-        ui,
-        model,
-        "Rules",
-        |s| s.virtual_workspaces.app_rules.clone(),
-        rule_summary,
-        rule_detail,
-        move |model, error| {
-            // A native sheet collects the first matcher before inserting a valid rule.
-            let input = Rc::new(TextField::new(&ui).placeholder("com.apple.Safari"));
-            let weak_sheet = Rc::downgrade(model);
-            let weak_model = Rc::downgrade(model);
-            let weak_input = Rc::downgrade(&input);
-            let button = Button::new(&ui, "Add Rule").key_equivalent("\r").on_click(move || {
-                let Some(input) = weak_input.upgrade() else {
-                    return;
-                };
-                let value = input.get_value();
-                if value.trim().is_empty() {
-                    return;
-                }
-                FormBuilder::submit(
-                    &weak_model,
-                    Box::new(move |s| {
-                        s.virtual_workspaces.app_rules.push(AppWorkspaceRule {
-                            app_id: Some(value),
-                            ..Default::default()
-                        });
-                        Ok(())
-                    }),
-                    error.clone(),
-                );
-                if let Some(sheet) = weak_sheet.upgrade() {
-                    if let Some(sheet) = sheet.sheet.borrow().as_ref() {
+    let mut f = FormBuilder::new(ui, model);
+    let message = Rc::new(ValidationMessage::new(&ui));
+    let current: Rc<RefCell<Option<Page>>> = Rc::new(RefCell::new(None));
+    let weak = Rc::downgrade(model);
+    let editor = current.clone();
+    let edit_rule: Rc<dyn Fn(usize)> = Rc::new(move |index| {
+        if let Some(model) = weak.upgrade() {
+            let page = rule_detail(ui, &model, index);
+            let syncing = model.syncing.replace(true);
+            for sync in &page.sync {
+                sync(&model.source.borrow());
+            }
+            model.syncing.set(syncing);
+            let weak = Rc::downgrade(&model);
+            let done = Button::new(&ui, "Done").key_equivalent("\r").on_click(move || {
+                if let Some(model) = weak.upgrade() {
+                    if let Some(sheet) = model.sheet.borrow().as_ref() {
                         sheet.end();
                     }
                 }
             });
-            let weak_sheet = Rc::downgrade(model);
-            let cancel = Button::new(&ui, "Cancel").key_equivalent("\u{1b}").on_click(move || {
-                if let Some(sheet) = weak_sheet.upgrade() {
-                    if let Some(sheet) = sheet.sheet.borrow().as_ref() {
-                        sheet.end();
-                    }
-                }
-            });
-            let content = VStack::new(&ui)
-                .insets(Insets {
-                    top: 20.0,
-                    left: 20.0,
-                    bottom: 20.0,
-                    right: 20.0,
-                })
-                .push(Label::new(&ui, "Bundle identifier"))
-                .push(input)
-                .push(HStack::new(&ui).push(cancel).push(button));
-            let native = Sheet::new(&ui, "Add Rule", content);
+            let content = VStack::new(&ui).push(page.view.clone()).push(
+                HStack::new(&ui)
+                    .push(Caption::new(&ui, "Changes save automatically."))
+                    .spacer(&ui)
+                    .push(done),
+            );
+            let sheet = Sheet::new(&ui, "Edit App Rule", content);
+            sheet.ns_window().setContentSize(CGSize::new(600.0, 620.0));
             if let Some(window) = NSApplication::sharedApplication(ui.mtm()).keyWindow() {
-                native.show(&window);
-                native.ns_window().setContentSize(CGSize::new(380.0, 150.0));
-                *model.sheet.borrow_mut() = Some(native);
+                sheet.show(&window);
+                *model.sheet.borrow_mut() = Some(sheet);
+                *editor.borrow_mut() = Some(page);
             }
-        },
-        |s, i| {
-            if i < s.virtual_workspaces.app_rules.len() {
-                s.virtual_workspaces.app_rules.remove(i);
+        }
+    });
+    let action = edit_rule.clone();
+    let table = Rc::new(
+        Table::<AppWorkspaceRule>::new(&ui)
+            .column("match", "Application or condition", 330.0)
+            .column("behavior", "Behavior", 210.0)
+            .cells(move |rule, column| {
+                let value = if column == 0 {
+                    rule_summary(rule)
+                } else {
+                    rule_behavior(rule)
+                };
+                let label = Label::new(&ui, &value);
+                label.tooltip(&value);
+                Box::new(label)
+            })
+            .on_double_click(move |index| action(index))
+            .reorderable(true)
+            .on_reorder({
+                let weak = Rc::downgrade(model);
+                let error = Rc::downgrade(&message);
+                move |from, to| {
+                    FormBuilder::submit(
+                        &weak,
+                        Box::new(move |s| {
+                            let rules = &mut s.virtual_workspaces.app_rules;
+                            if from < rules.len() && to < rules.len() {
+                                let rule = rules.remove(from);
+                                rules.insert(to, rule);
+                            }
+                            Ok(())
+                        }),
+                        error.clone(),
+                    )
+                }
+            }),
+    );
+    table.min_height(160.0);
+    let axis = objc2_app_kit::NSLayoutConstraintOrientation::Vertical;
+    table.ns_view().setContentHuggingPriority_forOrientation(1.0, axis);
+    table
+        .ns_view()
+        .setContentCompressionResistancePriority_forOrientation(1.0, axis);
+    let weak_table = Rc::downgrade(&table);
+    let edit = IconButton::new(&ui, "pencil", "Edit Rule…").on_click(move || {
+        if let Some(index) = weak_table.upgrade().and_then(|table| table.selection()) {
+            edit_rule(index);
+        }
+    });
+    let weak = Rc::downgrade(model);
+    let error = Rc::downgrade(&message);
+    let controls = AddRemoveControl::new(&ui).on_add(move || {
+        if let Some(model) = weak.upgrade() {
+            add_rule(ui, &model, error.clone());
+        }
+    });
+    let weak = Rc::downgrade(model);
+    let weak_table = Rc::downgrade(&table);
+    let error = Rc::downgrade(&message);
+    let controls = Rc::new(controls.on_remove(move || {
+        if let Some(index) = weak_table.upgrade().and_then(|table| table.selection()) {
+            FormBuilder::submit(
+                &weak,
+                Box::new(move |s| {
+                    if index < s.virtual_workspaces.app_rules.len() {
+                        s.virtual_workspaces.app_rules.remove(index);
+                    }
+                    Ok(())
+                }),
+                error.clone(),
+            );
+        }
+    }));
+    controls.set_remove_enabled(false);
+    edit.set_enabled(false);
+    let weak_controls = Rc::downgrade(&controls);
+    let weak_edit = objc2::rc::Weak::new(edit.ns_button());
+    table.set_on_select(move |selection| {
+        if let Some(controls) = weak_controls.upgrade() {
+            controls.set_remove_enabled(selection.is_some());
+        }
+        if let Some(edit) = weak_edit.load() {
+            edit.setEnabled(selection.is_some());
+        }
+    });
+    let weak_table = Rc::downgrade(&table);
+    let last = RefCell::new(Vec::new());
+    f.sync.push(Box::new(move |source| {
+        let rules = &source.virtual_workspaces.app_rules;
+        if *last.borrow() != *rules {
+            if let Some(table) = weak_table.upgrade() {
+                let selected = table.selection().filter(|index| *index < rules.len());
+                table.set_rows(rules.clone());
+                table.set_selected(selected);
             }
-            Ok(())
-        },
-        Some(|s, from, to| {
-            if from < s.virtual_workspaces.app_rules.len()
-                && to < s.virtual_workspaces.app_rules.len()
-            {
-                let rule = s.virtual_workspaces.app_rules.remove(from);
-                s.virtual_workspaces.app_rules.insert(to, rule);
+            *last.borrow_mut() = rules.clone();
+        }
+        if let Some(page) = current.borrow().as_ref() {
+            for sync in &page.sync {
+                sync(source);
             }
-        }),
-    )
+        }
+    }));
+    f.finish(SettingsPage::new(&ui, "Rules")
+        .subtitle("Choose which windows Rift manages and where they open. Double-click a rule to edit; drag to reorder.")
+        .section(table)
+        .section(HStack::new(&ui).push(controls).push(edit))
+        .section(message)
+        .into_editor())
 }
+
+fn rule_behavior(rule: &AppWorkspaceRule) -> String {
+    let mut parts = vec![if rule.manage == Some(false) {
+        "Ignore".into()
+    } else if rule.floating {
+        "Floating".into()
+    } else if rule.manage == Some(true) {
+        "Manage".into()
+    } else {
+        "Default".into()
+    }];
+    if let Some(workspace) = &rule.workspace {
+        parts.push(match workspace {
+            WorkspaceSelector::Index(index) => format!("Workspace {}", index + 1),
+            WorkspaceSelector::Name(name) => name.clone(),
+        });
+    }
+    if rule.focus {
+        parts.push("Focus".into());
+    }
+    parts.join(" · ")
+}
+
+fn add_rule(ui: Ui, model: &Rc<Model>, error: Weak<ValidationMessage>) {
+    // A native sheet collects the first matcher before inserting a valid rule.
+    let input = Rc::new(TextField::new(&ui).placeholder("com.apple.Safari"));
+    let weak_sheet = Rc::downgrade(model);
+    let weak_model = Rc::downgrade(model);
+    let weak_input = Rc::downgrade(&input);
+    let button = Button::new(&ui, "Add Rule").key_equivalent("\r").on_click(move || {
+        let Some(input) = weak_input.upgrade() else {
+            return;
+        };
+        let value = input.get_value();
+        if value.trim().is_empty() {
+            return;
+        }
+        FormBuilder::submit(
+            &weak_model,
+            Box::new(move |s| {
+                s.virtual_workspaces.app_rules.push(AppWorkspaceRule {
+                    app_id: Some(value),
+                    ..Default::default()
+                });
+                Ok(())
+            }),
+            error.clone(),
+        );
+        if let Some(sheet) = weak_sheet.upgrade() {
+            if let Some(sheet) = sheet.sheet.borrow().as_ref() {
+                sheet.end();
+            }
+        }
+    });
+    let weak_sheet = Rc::downgrade(model);
+    let cancel = Button::new(&ui, "Cancel").key_equivalent("\u{1b}").on_click(move || {
+        if let Some(sheet) = weak_sheet.upgrade() {
+            if let Some(sheet) = sheet.sheet.borrow().as_ref() {
+                sheet.end();
+            }
+        }
+    });
+    let content = VStack::new(&ui)
+        .insets(Insets {
+            top: 20.0,
+            left: 20.0,
+            bottom: 20.0,
+            right: 20.0,
+        })
+        .push(Label::new(&ui, "Bundle identifier"))
+        .push(input)
+        .push(HStack::new(&ui).push(cancel).push(button));
+    let native = Sheet::new(&ui, "Add Rule", content);
+    if let Some(window) = NSApplication::sharedApplication(ui.mtm()).keyWindow() {
+        native.show(&window);
+        native.ns_window().setContentSize(CGSize::new(380.0, 150.0));
+        *model.sheet.borrow_mut() = Some(native);
+    }
+}
+
 fn rule_summary(r: &AppWorkspaceRule) -> String {
     r.app_name
         .as_ref()
@@ -607,12 +756,7 @@ fn rule_detail(ui: Ui, model: &Rc<Model>, i: usize) -> Page {
         }
         geometry = geometry.row(row);
     }
-    f.finish(
-        SettingsPage::new(&ui, "Rule")
-            .section(matches)
-            .section(actions)
-            .section(geometry),
-    )
+    f.finish(SettingsPage::new(&ui, "").section(matches).section(actions).section(geometry))
 }
 
 pub(super) fn strings(

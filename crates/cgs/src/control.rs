@@ -82,6 +82,8 @@ pub struct IconButton(Button);
 impl IconButton {
     pub fn new(ui: &Ui, symbol: &str, label: &str) -> Self {
         let button = Button::new(ui, label).symbol(symbol);
+        button.ns_button().setBezelStyle(NSBezelStyle::AccessoryBar);
+        button.ns_button().setControlSize(NSControlSize::Small);
         button.accessibility_label(label);
         Self(button)
     }
@@ -192,13 +194,28 @@ native_control!(Checkbox, NSButton, ns_button);
 pub struct Popup {
     native: Retained<NSPopUpButton>,
     target: Retained<ActionTarget>,
+    menu: Option<crate::Menu>,
 }
 impl Popup {
     pub fn new(ui: &Ui) -> Self {
         let native = NSPopUpButton::new(ui.mtm());
         let target = ActionTarget::new(ui);
         target.attach(&native);
-        Self { native, target }
+        Self { native, target, menu: None }
+    }
+
+    /// Native pull-down menu for secondary collection actions.
+    pub fn actions(ui: &Ui, label: &str, menu: crate::Menu) -> Self {
+        let header = crate::MenuItem::new(ui, "");
+        header.ns_menu_item().setImage(crate::Symbol::named("ellipsis").as_deref());
+        menu.ns_menu().insertItem_atIndex(header.ns_menu_item(), 0);
+        let mut popup = Self::new(ui);
+        popup.native.setPullsDown(true);
+        popup.native.setMenu(Some(menu.ns_menu()));
+        popup.native.setControlSize(NSControlSize::Small);
+        popup.accessibility_label(label);
+        popup.menu = Some(menu);
+        popup
     }
 
     pub fn items(self, values: impl IntoIterator<Item = impl AsRef<str>>) -> Self {

@@ -1,7 +1,8 @@
 use std::rc::Rc;
 
+use objc2::Message;
 use objc2::rc::Retained;
-use objc2_app_kit::{NSBox, NSBoxType, NSTextField, NSTitlePosition, NSView};
+use objc2_app_kit::{NSTextField, NSView};
 
 use crate::*;
 
@@ -138,53 +139,18 @@ setting_row!(ColorRow);
 setting_row!(ButtonRow);
 pub type DisclosureRow = Disclosure;
 
-/// A native grouping box with compact rows and system separators.
-pub struct SettingsGroup {
-    ui: Ui,
-    native: Retained<NSBox>,
-    rows: VStack,
-}
+/// Compact preference content; AppKit controls provide their own appearance.
+pub struct SettingsGroup(VStack);
 impl SettingsGroup {
-    pub fn new(ui: &Ui) -> Self {
-        let native = NSBox::new(ui.mtm());
-        native.setBoxType(NSBoxType::Custom);
-        native.setTransparent(true);
-        native.setBorderWidth(0.0);
-        native.setTitlePosition(NSTitlePosition::NoTitle);
-        native.setContentViewMargins(CGSize::new(0.0, 0.0));
-        let rows = VStack::new(ui).spacing(0.0);
-        native.setContentView(Some(rows.ns_view()));
-        rows.ns_view()
-            .widthAnchor()
-            .constraintEqualToAnchor(&native.widthAnchor())
-            .setActive(true);
-        // NSBox owns its content view's frame; constrain its fitting size to the rows.
-        rows.ns_view()
-            .heightAnchor()
-            .constraintEqualToAnchor(&native.heightAnchor())
-            .setActive(true);
-        Self { ui: *ui, native, rows }
-    }
+    pub fn new(ui: &Ui) -> Self { Self(VStack::new(ui).spacing(10.0)) }
 
     pub fn row(self, row: impl NativeView) -> Self {
-        if !self.rows.ns_stack_view().arrangedSubviews().is_empty() {
-            self.rows.add(Divider::new(&self.ui));
-        }
-        self.rows.add(
-            VStack::new(&self.ui)
-                .insets(Insets {
-                    top: 8.0,
-                    left: 12.0,
-                    bottom: 8.0,
-                    right: 12.0,
-                })
-                .push(row),
-        );
+        self.0.add(row);
         self
     }
 }
 impl NativeView for SettingsGroup {
-    fn ns_view(&self) -> &NSView { &self.native }
+    fn ns_view(&self) -> &NSView { self.0.ns_view() }
 }
 
 pub struct Section {
@@ -243,6 +209,7 @@ pub struct SettingsPage {
     ui: Ui,
     scroll: ScrollView,
     content: VStack,
+    top: Retained<objc2_app_kit::NSLayoutConstraint>,
 }
 impl SettingsPage {
     pub fn new(ui: &Ui, title: &str) -> Self {
@@ -260,7 +227,8 @@ impl SettingsPage {
         crate::view::prepare(content.ns_view());
         let parent = outer.ns_view();
         let child = content.ns_view();
-        child.topAnchor().constraintEqualToAnchor(&parent.topAnchor()).setActive(true);
+        let top = child.topAnchor().constraintEqualToAnchor(&parent.topAnchor());
+        top.setActive(true);
         child
             .bottomAnchor()
             .constraintEqualToAnchor(&parent.bottomAnchor())
@@ -273,13 +241,27 @@ impl SettingsPage {
             .widthAnchor()
             .constraintLessThanOrEqualToAnchor(&parent.widthAnchor())
             .setActive(true);
-        child.widthAnchor().constraintLessThanOrEqualToConstant(620.0).setActive(true);
+        child.widthAnchor().constraintLessThanOrEqualToConstant(580.0).setActive(true);
         let fill = child.widthAnchor().constraintEqualToAnchor(&parent.widthAnchor());
         fill.setPriority(750.0);
         fill.setActive(true);
         let scroll = ScrollView::new(ui, outer);
         scroll.fit_width();
-        Self { ui: *ui, scroll, content }
+        Self { ui: *ui, scroll, content, top }
+    }
+
+    /// Let a collection editor own the viewport; its table supplies scrolling.
+    pub fn into_editor(self) -> EditorPage {
+        let native = self.scroll.content_view().retain();
+        self.scroll.ns_scroll_view().setDocumentView(None);
+        native.removeFromSuperview();
+        self.top.setActive(false);
+        self.content
+            .ns_view()
+            .topAnchor()
+            .constraintEqualToAnchor(&native.safeAreaLayoutGuide().topAnchor())
+            .setActive(true);
+        EditorPage { native, _content: self.content }
     }
 
     pub fn subtitle(self, text: &str) -> Self {
@@ -296,6 +278,14 @@ impl SettingsPage {
 }
 impl NativeView for SettingsPage {
     fn ns_view(&self) -> &NSView { self.scroll.ns_view() }
+}
+
+pub struct EditorPage {
+    native: Retained<NSView>,
+    _content: VStack,
+}
+impl NativeView for EditorPage {
+    fn ns_view(&self) -> &NSView { &self.native }
 }
 
 pub struct ResettableRow {
