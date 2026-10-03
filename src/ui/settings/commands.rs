@@ -361,7 +361,7 @@ pub(super) fn keyboard(ui: Ui, model: &Rc<Model>) -> Page {
     let combinations = modifier_combinations(&mut f, model);
     f.finish(SettingsPage::new(&ui, "Keyboard").section(Section::new(&ui, "Keymap").row(mode_controls))
         .section(Section::new(&ui, "Shortcuts").description("Select a row and choose Edit, or double-click. Press Escape to cancel recording.")
-            .row(table).row(HStack::new(&ui).push(add).push(edit).push(remove)).row(error))
+            .content(table).content(HStack::new(&ui).push(add).push(edit).push(remove)).footer(error))
         .section(Section::new(&ui, "").row(Disclosure::new(&ui, "Reusable modifier combinations", combinations))))
 }
 fn binding_rows(s: &ConfigSource, mode: &str) -> Vec<(String, String)> {

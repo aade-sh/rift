@@ -50,12 +50,11 @@ pub(super) fn build(ui: Ui, model: &Rc<Model>, id: usize) -> Page {
 fn general(ui: Ui, model: &Rc<Model>) -> Page {
     let mut f = FormBuilder::new(ui, model);
     let mut page = SettingsPage::new(&ui, "General");
-    let section = Section::new(&ui, "Window behavior").row(f.switch(
+    let mut section = Section::new(&ui, "Window behavior").row(f.switch(
         "Animate window changes",
         |s| s.settings.animate,
         |s, v| s.settings.animate = v,
     ));
-    page = page.section(section);
     let row = f.number(
         "Duration (seconds)",
         1.0,
@@ -63,7 +62,7 @@ fn general(ui: Ui, model: &Rc<Model>) -> Page {
         |s, v| s.settings.animation_duration = v,
     );
     f.enabled(&row, |s| s.settings.animate);
-    page = page.section(Section::new(&ui, "").row(row));
+    section = section.row(row);
     let row = f.number(
         "Frame rate",
         1.0,
@@ -71,44 +70,43 @@ fn general(ui: Ui, model: &Rc<Model>) -> Page {
         |s, v| s.settings.animation_fps = v,
     );
     f.enabled(&row, |s| s.settings.animate);
-    page = page.section(Section::new(&ui, "").row(row));
-    let section = Section::new(&ui, "")
-        .description("Frame rate must be positive. Higher values make animation smoother.")
-        .row(f.popup(
-            "Animation easing",
-            vec![
-                ("Ease In Out", AnimationEasing::EaseInOut),
-                ("Linear", AnimationEasing::Linear),
-                ("Ease In Sine", AnimationEasing::EaseInSine),
-                ("Ease Out Sine", AnimationEasing::EaseOutSine),
-                ("Ease In Out Sine", AnimationEasing::EaseInOutSine),
-                ("Ease In Quad", AnimationEasing::EaseInQuad),
-                ("Ease Out Quad", AnimationEasing::EaseOutQuad),
-                ("Ease In Out Quad", AnimationEasing::EaseInOutQuad),
-                ("Ease In Cubic", AnimationEasing::EaseInCubic),
-                ("Ease Out Cubic", AnimationEasing::EaseOutCubic),
-                ("Ease In Out Cubic", AnimationEasing::EaseInOutCubic),
-                ("Ease In Quart", AnimationEasing::EaseInQuart),
-                ("Ease Out Quart", AnimationEasing::EaseOutQuart),
-                ("Ease In Out Quart", AnimationEasing::EaseInOutQuart),
-                ("Ease In Quint", AnimationEasing::EaseInQuint),
-                ("Ease Out Quint", AnimationEasing::EaseOutQuint),
-                ("Ease In Out Quint", AnimationEasing::EaseInOutQuint),
-                ("Ease In Expo", AnimationEasing::EaseInExpo),
-                ("Ease Out Expo", AnimationEasing::EaseOutExpo),
-                ("Ease In Out Expo", AnimationEasing::EaseInOutExpo),
-                ("Ease In Circ", AnimationEasing::EaseInCirc),
-                ("Ease Out Circ", AnimationEasing::EaseOutCirc),
-                ("Ease In Out Circ", AnimationEasing::EaseInOutCirc),
-            ],
-            |s| s.settings.animation_easing,
-            |s, v| s.settings.animation_easing = v,
-        ))
-        .row(f.switch(
-            "Start with tiling disabled",
-            |s| s.settings.default_disable,
-            |s, v| s.settings.default_disable = v,
-        ));
+    section = section.row(row);
+    let row = f.popup(
+        "Animation easing",
+        vec![
+            ("Ease In Out", AnimationEasing::EaseInOut),
+            ("Linear", AnimationEasing::Linear),
+            ("Ease In Sine", AnimationEasing::EaseInSine),
+            ("Ease Out Sine", AnimationEasing::EaseOutSine),
+            ("Ease In Out Sine", AnimationEasing::EaseInOutSine),
+            ("Ease In Quad", AnimationEasing::EaseInQuad),
+            ("Ease Out Quad", AnimationEasing::EaseOutQuad),
+            ("Ease In Out Quad", AnimationEasing::EaseInOutQuad),
+            ("Ease In Cubic", AnimationEasing::EaseInCubic),
+            ("Ease Out Cubic", AnimationEasing::EaseOutCubic),
+            ("Ease In Out Cubic", AnimationEasing::EaseInOutCubic),
+            ("Ease In Quart", AnimationEasing::EaseInQuart),
+            ("Ease Out Quart", AnimationEasing::EaseOutQuart),
+            ("Ease In Out Quart", AnimationEasing::EaseInOutQuart),
+            ("Ease In Quint", AnimationEasing::EaseInQuint),
+            ("Ease Out Quint", AnimationEasing::EaseOutQuint),
+            ("Ease In Out Quint", AnimationEasing::EaseInOutQuint),
+            ("Ease In Expo", AnimationEasing::EaseInExpo),
+            ("Ease Out Expo", AnimationEasing::EaseOutExpo),
+            ("Ease In Out Expo", AnimationEasing::EaseInOutExpo),
+            ("Ease In Circ", AnimationEasing::EaseInCirc),
+            ("Ease Out Circ", AnimationEasing::EaseOutCirc),
+            ("Ease In Out Circ", AnimationEasing::EaseInOutCirc),
+        ],
+        |s| s.settings.animation_easing,
+        |s, v| s.settings.animation_easing = v,
+    );
+    f.enabled(&row, |s| s.settings.animate);
+    let section = section.row(row).row(f.switch(
+        "Start with tiling disabled",
+        |s| s.settings.default_disable,
+        |s, v| s.settings.default_disable = v,
+    ));
     page = page.section(section);
     let section = Section::new(&ui, "Focus")
         .row(f.switch(
@@ -121,14 +119,13 @@ fn general(ui: Ui, model: &Rc<Model>) -> Page {
             |s| s.settings.mouse_follows_focus,
             |s, v| s.settings.mouse_follows_focus = v,
         ));
-    page = page.section(section);
     let row = f.switch(
         "Hide pointer after focusing",
         |s| s.settings.mouse_hides_on_focus,
         |s, v| s.settings.mouse_hides_on_focus = v,
     );
     f.enabled(&row, |s| s.settings.mouse_follows_focus);
-    page = page.section(Section::new(&ui, "").row(row));
+    page = page.section(section.row(row));
     let section = Section::new(&ui, "Configuration").row(f.switch(
         "Reload config when edited externally",
         |s| s.settings.hot_reload,
@@ -156,28 +153,35 @@ fn layout(ui: Ui, model: &Rc<Model>) -> Page {
     page = page.section(section);
     let mode = Rc::new(Cell::new(model.source.borrow().settings.layout.mode));
     let sections: Rc<RefCell<Vec<(LayoutMode, Rc<Section>)>>> = Rc::new(RefCell::new(Vec::new()));
-    let weak_sections = Rc::downgrade(&sections);
-    let selected = mode.clone();
-    let tiles = CollectionGrid::new(
-        &ui,
-        layouts()
-            .into_iter()
-            .map(|(name, mode)| (mode, name.to_string(), String::new()))
-            .collect(),
-        3,
-    )
-    .on_select(move |value| {
-        selected.set(value);
-        if let Some(sections) = weak_sections.upgrade() {
-            for (mode, section) in sections.borrow().iter() {
-                section.set_hidden(*mode != value);
+    let options_section = |layout: LayoutMode| {
+        let weak_sections = Rc::downgrade(&sections);
+        let selected = mode.clone();
+        let values = layouts();
+        let labels: Vec<_> = values.iter().map(|(label, _)| *label).collect();
+        let picker = Popup::new(&ui).items(&labels);
+        let index = values.iter().position(|(_, value)| *value == layout).unwrap_or(0);
+        picker.set_selected(index);
+        let native = objc2::rc::Weak::new(picker.ns_popup_button());
+        let picker = picker.on_change(move |index| {
+            let value = values[index].1;
+            selected.set(value);
+            if let Some(picker) = native.load() {
+                picker.selectItemAtIndex(
+                    values.iter().position(|(_, value)| *value == layout).unwrap_or(0) as isize,
+                );
             }
-        }
-    });
-    tiles.set_selected(&mode.get());
-    page = page.section(Section::new(&ui, "Layout options").row(tiles));
+            if let Some(sections) = weak_sections.upgrade() {
+                for (mode, section) in sections.borrow().iter() {
+                    section.set_hidden(*mode != value);
+                }
+            }
+        });
+        Section::new(&ui, "Layout options")
+            .description("Choose a layout to edit its options below.")
+            .row(SettingsRow::new(&ui, "Show settings for", picker))
+    };
     let section = Rc::new(
-        Section::new(&ui, "Traditional")
+        options_section(LayoutMode::Traditional)
             .row(f.switch(
                 "Equalize splits",
                 |s| s.settings.layout.traditional.equalize_nodes,
@@ -191,10 +195,10 @@ fn layout(ui: Ui, model: &Rc<Model>) -> Page {
             )),
     );
     section.set_hidden(mode.get() != LayoutMode::Traditional);
-    page = page.section(Section::new(&ui, "").row(section.clone()));
+    page = page.section(section.clone());
     sections.borrow_mut().push((LayoutMode::Traditional, section));
     let section = Rc::new(
-        Section::new(&ui, "BSP")
+        options_section(LayoutMode::Bsp)
             .row(f.popup(
                 "New window position",
                 insertion(),
@@ -218,10 +222,10 @@ fn layout(ui: Ui, model: &Rc<Model>) -> Page {
             )),
     );
     section.set_hidden(mode.get() != LayoutMode::Bsp);
-    page = page.section(Section::new(&ui, "").row(section.clone()));
+    page = page.section(section.clone());
     sections.borrow_mut().push((LayoutMode::Bsp, section));
     let section = Rc::new(
-        Section::new(&ui, "Stack")
+        options_section(LayoutMode::Stack)
             .row(f.number(
                 "Window offset (points)",
                 1.0,
@@ -247,10 +251,10 @@ fn layout(ui: Ui, model: &Rc<Model>) -> Page {
             )),
     );
     section.set_hidden(mode.get() != LayoutMode::Stack);
-    page = page.section(Section::new(&ui, "").row(section.clone()));
+    page = page.section(section.clone());
     sections.borrow_mut().push((LayoutMode::Stack, section));
     let section = Rc::new(
-        Section::new(&ui, "MasterStack")
+        options_section(LayoutMode::MasterStack)
             .row(f.number(
                 "Master width (%)",
                 100.0,
@@ -303,10 +307,10 @@ fn layout(ui: Ui, model: &Rc<Model>) -> Page {
             )),
     );
     section.set_hidden(mode.get() != LayoutMode::MasterStack);
-    page = page.section(Section::new(&ui, "").row(section.clone()));
+    page = page.section(section.clone());
     sections.borrow_mut().push((LayoutMode::MasterStack, section));
     let section = Rc::new(
-        Section::new(&ui, "Scrolling")
+        options_section(LayoutMode::Scrolling)
             .row(f.number(
                 "Default column width (%)",
                 100.0,
@@ -387,13 +391,14 @@ fn layout(ui: Ui, model: &Rc<Model>) -> Page {
             )),
     );
     section.set_hidden(mode.get() != LayoutMode::Scrolling);
-    page = page.section(Section::new(&ui, "").row(section.clone()));
+    page = page.section(section.clone());
     sections.borrow_mut().push((LayoutMode::Scrolling, section));
     let section = Rc::new(
-        Section::new(&ui, "Floating").description("Windows retain their position and size."),
+        options_section(LayoutMode::Floating)
+            .description("Windows retain their position and size."),
     );
     section.set_hidden(mode.get() != LayoutMode::Floating);
-    page = page.section(Section::new(&ui, "").row(section.clone()));
+    page = page.section(section.clone());
     sections.borrow_mut().push((LayoutMode::Floating, section));
     f.sync.push(Box::new(move |_| {
         let _ = &sections;
@@ -422,7 +427,6 @@ fn layout(ui: Ui, model: &Rc<Model>) -> Page {
                 Ok(())
             },
         ));
-    page = page.section(section);
     let sides = VStack::new(&ui)
         .push(f.number(
             "Top (points)",
@@ -448,7 +452,7 @@ fn layout(ui: Ui, model: &Rc<Model>) -> Page {
             |s| s.settings.layout.gaps.outer.right,
             |s, v| s.settings.layout.gaps.outer.right = v,
         ));
-    page = page.section(Section::new(&ui, "").row(Disclosure::new(&ui, "Customize sides", sides)));
+    page = page.section(section.row(Disclosure::new(&ui, "Customize sides", sides)));
     let section = Section::new(&ui, "Inner gaps")
         .row(f.number(
             "Horizontal (points)",
@@ -500,7 +504,6 @@ fn input(ui: Ui, model: &Rc<Model>) -> Page {
             |s| s.settings.gestures.fingers as f64,
             |s, v| s.settings.gestures.fingers = v as usize,
         ));
-    page = page.section(section);
     let tuning = VStack::new(&ui)
         .push(f.number(
             "Distance (%)",
@@ -524,11 +527,7 @@ fn input(ui: Ui, model: &Rc<Model>) -> Page {
             |s| s.settings.gestures.haptic_pattern,
             |s, v| s.settings.gestures.haptic_pattern = v,
         ));
-    page = page.section(Section::new(&ui, "").row(Disclosure::new(
-        &ui,
-        "Advanced swipe settings",
-        tuning,
-    )));
+    page = page.section(section.row(Disclosure::new(&ui, "Advanced swipe settings", tuning)));
     let section = Section::new(&ui, "Scrolling layout gestures")
         .description("These gestures navigate the Scrolling layout strip.")
         .row(f.switch(
@@ -687,7 +686,6 @@ fn interface(ui: Ui, model: &Rc<Model>) -> Page {
             |s| s.settings.ui.menu_bar.display_style,
             |s, v| s.settings.ui.menu_bar.display_style = v,
         ));
-    page = page.section(section);
     let message = Rc::new(ValidationMessage::new(&ui));
     let error = Rc::downgrade(&message);
     let weak_model = f.model.clone();
@@ -707,7 +705,7 @@ fn interface(ui: Ui, model: &Rc<Model>) -> Page {
             path.set_value(&s.settings.ui.menu_bar.layout_folder);
         }
     }));
-    page = page.section(Section::new(&ui, "").row(f.row("Layout folder", path, message)));
+    page = page.section(section.row(f.row("Layout folder", path, message)));
     let section = Section::new(&ui, "Overview")
         .description("Changing whether Overview is enabled requires restarting Rift.")
         .row(f.switch(
@@ -783,22 +781,22 @@ fn interface(ui: Ui, model: &Rc<Model>) -> Page {
             |s| s.settings.ui.stack_line.spacing,
             |s, v| s.settings.ui.stack_line.spacing = v,
         ));
-    page = page.section(section);
-    page = page.section(Section::new(&ui, "").row(f.color(
+    let section = section.row(f.color(
         "Selected color",
         |s| s.settings.ui.stack_line.selected_color,
         |s, v| s.settings.ui.stack_line.selected_color = v,
-    )));
-    page = page.section(Section::new(&ui, "").row(f.color(
+    ));
+    let section = section.row(f.color(
         "Unselected color",
         |s| s.settings.ui.stack_line.unselected_color,
         |s, v| s.settings.ui.stack_line.unselected_color = v,
-    )));
-    page = page.section(Section::new(&ui, "").row(f.color(
+    ));
+    let section = section.row(f.color(
         "Border color",
         |s| s.settings.ui.stack_line.border_color,
         |s, v| s.settings.ui.stack_line.border_color = v,
-    )));
+    ));
+    page = page.section(section);
     f.finish(page)
 }
 fn advanced(ui: Ui, model: &Rc<Model>) -> Page {
@@ -853,7 +851,7 @@ fn advanced(ui: Ui, model: &Rc<Model>) -> Page {
         Section::new(&ui, "Configuration file")
             .description(&path.to_string_lossy())
             .row(actions.push(reload))
-            .row(message),
+            .footer(message),
     );
     f.finish(page)
 }
@@ -877,7 +875,7 @@ impl FormBuilder {
         title: &str,
         get: impl Fn(&ConfigSource) -> Color + 'static,
         set: impl Fn(&mut ConfigSource, Color) + Send + Copy + 'static,
-    ) -> VStack {
+    ) -> SettingsRow {
         use objc2_app_kit::{NSColor, NSColorSpace};
         let message = Rc::new(ValidationMessage::new(&self.ui));
         let error = Rc::downgrade(&message);
@@ -1009,5 +1007,5 @@ fn focus_suspend(f: &mut FormBuilder) -> Section {
         .row(SettingsRow::new(&ui, "Shortcut", recorder))
         .row(SettingsRow::new(&ui, "Modifiers only", modifier_recorder))
         .row(clear)
-        .row(message)
+        .footer(message)
 }

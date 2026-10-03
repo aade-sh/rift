@@ -16,6 +16,7 @@ pub struct Window {
     native: Retained<NSWindow>,
     content: RefCell<Option<Box<dyn NativeView>>>,
     delegate: Option<Retained<DelegateBridge>>,
+    toolbar: Option<crate::Toolbar>,
 }
 impl Window {
     pub fn new(ui: &Ui) -> Self {
@@ -38,6 +39,7 @@ impl Window {
             native,
             content: RefCell::new(None),
             delegate: None,
+            toolbar: None,
         }
     }
 
@@ -69,6 +71,9 @@ impl Window {
         } else {
             self.native.setContentViewController(None);
             self.native.setContentView(Some(content.ns_view()));
+        }
+        if let Some(toolbar) = &self.toolbar {
+            toolbar.attach(&self.native);
         }
         *self.content.borrow_mut() = Some(Box::new(content));
     }
@@ -129,7 +134,7 @@ pub enum Appearance {
 pub struct SettingsWindow(Window);
 impl SettingsWindow {
     pub fn new(ui: &Ui, title: &str) -> Self {
-        let window = Window::new(ui)
+        let mut window = Window::new(ui)
             .title(title)
             .min_size(CGSize::new(
                 crate::Metrics::SIDEBAR_MIN_WIDTH + crate::Metrics::DETAIL_MIN_WIDTH,
@@ -137,10 +142,14 @@ impl SettingsWindow {
             ))
             .autosave_frame(title);
         window.native.setTitlebarSeparatorStyle(NSTitlebarSeparatorStyle::Automatic);
+        window.native.setToolbarStyle(NSWindowToolbarStyle::UnifiedCompact);
+        window.native.setTitleVisibility(NSWindowTitleVisibility::Hidden);
         window
             .native
             .setStyleMask(window.native.styleMask() | NSWindowStyleMask::FullSizeContentView);
-        crate::Toolbar::navigation(ui, "cgs.settings").attach(&window.native);
+        let toolbar = crate::Toolbar::navigation(ui, "cgs.settings");
+        toolbar.attach(&window.native);
+        window.toolbar = Some(toolbar);
         Self(window)
     }
 

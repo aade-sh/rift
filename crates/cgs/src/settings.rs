@@ -1,4 +1,7 @@
-use objc2_app_kit::{NSTextField, NSView};
+use std::rc::Rc;
+
+use objc2::rc::Retained;
+use objc2_app_kit::{NSBox, NSBoxType, NSTextField, NSTitlePosition, NSView};
 
 use crate::*;
 
@@ -59,16 +62,24 @@ pub struct SettingsRow {
     ui: Ui,
     stack: VStack,
     control: Box<dyn NativeView>,
-    validation: ValidationMessage,
+    validation: Rc<ValidationMessage>,
 }
 impl SettingsRow {
     pub fn new(ui: &Ui, title: &str, control: impl NativeView) -> Self {
-        let label = Label::new(ui, title);
+        Self::with_validation(ui, title, control, Rc::new(ValidationMessage::new(ui)))
+    }
+
+    pub fn with_validation(
+        ui: &Ui,
+        title: &str,
+        control: impl NativeView,
+        validation: Rc<ValidationMessage>,
+    ) -> Self {
+        let label = WrappingLabel::new(ui, title);
         let line = HStack::new(ui).push(label).spacer(ui);
         control.accessibility_label(title);
         line.ns_stack_view().addArrangedSubview(control.ns_view());
         let stack = VStack::new(ui).spacing(4.0).push(line);
-        let validation = ValidationMessage::new(ui);
         stack.ns_stack_view().addArrangedSubview(validation.ns_view());
         Self {
             ui: *ui,
@@ -125,17 +136,65 @@ setting_row!(ColorRow);
 setting_row!(ButtonRow);
 pub type DisclosureRow = Disclosure;
 
+/// A native grouping box with compact rows and system separators.
+pub struct SettingsGroup {
+    ui: Ui,
+    native: Retained<NSBox>,
+    rows: VStack,
+}
+impl SettingsGroup {
+    pub fn new(ui: &Ui) -> Self {
+        let native = NSBox::new(ui.mtm());
+        native.setBoxType(NSBoxType::Primary);
+        native.setTitlePosition(NSTitlePosition::NoTitle);
+        native.setContentViewMargins(CGSize::new(0.0, 0.0));
+        let rows = VStack::new(ui).spacing(0.0);
+        native.setContentView(Some(rows.ns_view()));
+        rows.ns_view()
+            .widthAnchor()
+            .constraintEqualToAnchor(&native.widthAnchor())
+            .setActive(true);
+        // NSBox owns its content view's frame; constrain its fitting size to the rows.
+        rows.ns_view()
+            .heightAnchor()
+            .constraintEqualToAnchor(&native.heightAnchor())
+            .setActive(true);
+        Self { ui: *ui, native, rows }
+    }
+
+    pub fn row(self, row: impl NativeView) -> Self {
+        if !self.rows.ns_stack_view().arrangedSubviews().is_empty() {
+            self.rows.add(Divider::new(&self.ui));
+        }
+        self.rows.add(
+            VStack::new(&self.ui)
+                .insets(Insets {
+                    top: 9.0,
+                    left: 12.0,
+                    bottom: 9.0,
+                    right: 12.0,
+                })
+                .push(row),
+        );
+        self
+    }
+}
+impl NativeView for SettingsGroup {
+    fn ns_view(&self) -> &NSView { &self.native }
+}
+
 pub struct Section {
     ui: Ui,
     stack: VStack,
+    group: Option<SettingsGroup>,
 }
 impl Section {
     pub fn new(ui: &Ui, title: &str) -> Self {
-        let mut stack = VStack::new(ui).spacing(Metrics::ROW_SPACING);
+        let mut stack = VStack::new(ui).spacing(6.0);
         if !title.is_empty() {
             stack = stack.push(SectionTitle::new(ui, title));
         }
-        Self { ui: *ui, stack }
+        Self { ui: *ui, stack, group: None }
     }
 
     pub fn description(self, text: &str) -> Self {
@@ -143,12 +202,30 @@ impl Section {
         self
     }
 
-    pub fn row(self, row: impl NativeView) -> Self {
-        self.stack.add(row);
+    pub fn row(mut self, row: impl NativeView) -> Self {
+        let group = self.group.take().unwrap_or_else(|| {
+            let group = SettingsGroup::new(&self.ui);
+            self.stack.ns_stack_view().addArrangedSubview(group.ns_view());
+            group
+                .ns_view()
+                .widthAnchor()
+                .constraintEqualToAnchor(&self.stack.ns_view().widthAnchor())
+                .setActive(true);
+            group
+        });
+        self.group = Some(group.row(row));
         self
     }
 
-    pub fn content(self, content: impl NativeView) -> Self { self.row(content) }
+    pub fn footer(self, content: impl NativeView) -> Self {
+        self.stack.add(content);
+        self
+    }
+
+    pub fn content(self, content: impl NativeView) -> Self {
+        self.stack.add(content);
+        self
+    }
 }
 impl NativeView for Section {
     fn ns_view(&self) -> &NSView { self.stack.ns_view() }
@@ -161,15 +238,15 @@ pub struct SettingsPage {
 }
 impl SettingsPage {
     pub fn new(ui: &Ui, title: &str) -> Self {
-        let content = VStack::new(ui)
-            .spacing(Metrics::SECTION_SPACING)
-            .insets(Insets {
-                top: Metrics::PAGE_TOP_INSET,
-                left: Metrics::PAGE_INSET,
-                bottom: Metrics::PAGE_INSET,
-                right: Metrics::PAGE_INSET,
-            })
-            .push(Title::new(ui, title));
+        let content = VStack::new(ui).spacing(Metrics::SECTION_SPACING).insets(Insets {
+            top: Metrics::PAGE_TOP_INSET,
+            left: Metrics::PAGE_INSET,
+            bottom: Metrics::PAGE_INSET,
+            right: Metrics::PAGE_INSET,
+        });
+        if !title.is_empty() {
+            content.add(Title::new(ui, title));
+        }
         let outer = View::flipped(ui);
         outer.ns_view().addSubview(content.ns_view());
         crate::view::prepare(content.ns_view());
@@ -188,7 +265,7 @@ impl SettingsPage {
             .widthAnchor()
             .constraintLessThanOrEqualToAnchor(&parent.widthAnchor())
             .setActive(true);
-        child.widthAnchor().constraintLessThanOrEqualToConstant(760.0).setActive(true);
+        child.widthAnchor().constraintLessThanOrEqualToConstant(620.0).setActive(true);
         let fill = child.widthAnchor().constraintEqualToAnchor(&parent.widthAnchor());
         fill.setPriority(750.0);
         fill.setActive(true);
@@ -202,7 +279,7 @@ impl SettingsPage {
         self
     }
 
-    pub fn section(self, section: Section) -> Self {
+    pub fn section(self, section: impl NativeView) -> Self {
         self.content.add(section);
         self
     }

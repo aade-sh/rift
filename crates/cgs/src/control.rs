@@ -21,6 +21,16 @@ macro_rules! native_control {
 }
 pub(crate) use native_control;
 
+// The glass bezel and NSGlassEffectView were introduced together in macOS 26.
+// Check runtime availability so older systems retain their standard push buttons.
+pub(crate) fn action_button_bezel() -> NSBezelStyle {
+    if objc2::runtime::AnyClass::get(c"NSGlassEffectView").is_some() {
+        NSBezelStyle::Glass
+    } else {
+        NSBezelStyle::Push
+    }
+}
+
 pub struct Button {
     native: Retained<NSButton>,
     target: Retained<ActionTarget>,
@@ -29,7 +39,7 @@ impl Button {
     pub fn new(ui: &Ui, title: &str) -> Self {
         let native = NSButton::new(ui.mtm());
         native.setTitle(&NSString::from_str(title));
-        native.setBezelStyle(NSBezelStyle::Push);
+        native.setBezelStyle(action_button_bezel());
         let target = ActionTarget::new(ui);
         target.attach(&native);
         Self { native, target }
@@ -585,7 +595,7 @@ impl AddRemoveControl {
     pub fn new(ui: &Ui) -> Self {
         let add = IconButton::new(ui, "plus", "Add");
         let remove = IconButton::new(ui, "minus", "Remove");
-        let stack = HStack::new(ui).spacing(0.0);
+        let stack = HStack::new(ui).spacing(crate::Metrics::CONTROL_SPACING);
         stack.ns_stack_view().addArrangedSubview(add.ns_view());
         stack.ns_stack_view().addArrangedSubview(remove.ns_view());
         Self { stack, add, remove }

@@ -43,6 +43,14 @@ pub trait NativeView: 'static {
             value,
         );
     }
+    fn min_height(&self, value: f64) {
+        dimension(
+            self.ns_view(),
+            NSLayoutAttribute::Height,
+            NSLayoutRelation::GreaterThanOrEqual,
+            value,
+        );
+    }
     fn min_width(&self, value: f64) {
         dimension(
             self.ns_view(),
@@ -207,10 +215,10 @@ pub struct Metrics;
 impl Metrics {
     pub const CONTROL_SPACING: f64 = 8.0;
     pub const DETAIL_MIN_WIDTH: f64 = 400.0;
-    pub const PAGE_INSET: f64 = 24.0;
+    pub const PAGE_INSET: f64 = 20.0;
     pub const PAGE_TOP_INSET: f64 = 20.0;
-    pub const ROW_SPACING: f64 = 12.0;
-    pub const SECTION_SPACING: f64 = 24.0;
+    pub const ROW_SPACING: f64 = 6.0;
+    pub const SECTION_SPACING: f64 = 18.0;
     pub const SIDEBAR_MIN_WIDTH: f64 = 160.0;
     pub const SIDEBAR_WIDTH: f64 = 200.0;
 }

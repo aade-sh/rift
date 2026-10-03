@@ -1,7 +1,8 @@
-use objc2::MainThreadOnly;
 use objc2::rc::Retained;
+use objc2::runtime::ProtocolObject;
+use objc2::{MainThreadOnly, define_class, msg_send, sel};
 use objc2_app_kit::*;
-use objc2_foundation::{NSArray, NSString};
+use objc2_foundation::{NSArray, NSObject, NSObjectProtocol, NSString};
 
 use crate::*;
 
@@ -29,11 +30,7 @@ impl SplitView {
             NSSplitViewItem::splitViewItemWithViewController(controller.ns_view_controller())
         };
         if sidebar {
-            item.setMinimumThickness(Metrics::SIDEBAR_MIN_WIDTH);
-            item.setMaximumThickness(300.0);
-            item.setCanCollapse(true);
-        } else {
-            item.setMinimumThickness(Metrics::DETAIL_MIN_WIDTH);
+            item.setAllowsFullHeightLayout(true);
         }
         self.native.addSplitViewItem(&item);
         self.children.push(controller);
@@ -59,8 +56,19 @@ pub struct Sidebar<T: 'static> {
 impl<T: Clone + 'static> Sidebar<T> {
     pub fn new(ui: &Ui, items: Vec<SidebarItem<T>>) -> Self {
         let ui_copy = *ui;
+        // Let system fonts and symbol sizes determine the content minimum, so
+        // navigation labels remain readable even at the platform's narrow sidebar size.
+        let content_width = items
+            .iter()
+            .map(|item| {
+                let label = Label::new(ui, &item.title).ns_view().fittingSize().width;
+                let icon = ImageView::symbol(ui, &item.symbol)
+                    .map_or(0.0, |image| image.ns_view().fittingSize().width);
+                label + icon + Metrics::CONTROL_SPACING * 4.0
+            })
+            .fold(0.0, f64::max);
         let table = Table::<SidebarItem<T>>::new(ui)
-            .column("page", "", Metrics::SIDEBAR_WIDTH)
+            .column("page", "", 0.0)
             .cells(move |item, _| {
                 let row = HStack::new(&ui_copy);
                 let row = if let Some(image) = ImageView::symbol(&ui_copy, &item.symbol) {
@@ -73,6 +81,11 @@ impl<T: Clone + 'static> Sidebar<T> {
             .rows(items);
         table.ns_table_view().setHeaderView(None);
         table.ns_table_view().setStyle(NSTableViewStyle::SourceList);
+        table.ns_table_view().setUsesAutomaticRowHeights(false);
+        table.ns_table_view().setBackgroundColor(&NSColor::clearColor());
+        table.ns_scroll_view().setDrawsBackground(false);
+        table.min_width(content_width);
+        table.max_width(content_width + Metrics::PAGE_INSET * 2.0);
         Self { table }
     }
 
@@ -110,7 +123,13 @@ impl NativeView for NavigationSplitView {
 pub struct MasterDetail(SplitView);
 impl MasterDetail {
     pub fn new(ui: &Ui, master: impl NativeView, detail: impl NativeView) -> Self {
-        Self(SplitView::new(ui).pane(ui, master, false).pane(ui, detail, false))
+        let split = SplitView::new(ui).pane(ui, master, false).pane(ui, detail, false);
+        let items = split.native.splitViewItems();
+        let list = items.objectAtIndex(0);
+        list.setMinimumThickness(140.0);
+        list.setMaximumThickness(190.0);
+        list.setPreferredThicknessFraction(0.28);
+        Self(split)
     }
 
     pub fn ns_split_view_controller(&self) -> &NSSplitViewController {
@@ -123,25 +142,96 @@ impl NativeView for MasterDetail {
     fn view_controller(&self) -> Option<&NSViewController> { self.0.view_controller() }
 }
 
-pub struct Toolbar(Retained<NSToolbar>);
+define_class!(
+    #[unsafe(super(NSObject))]
+    #[thread_kind = MainThreadOnly]
+    #[name = "CgsNavigationToolbarDelegate"]
+    struct NavigationToolbarDelegate;
+    unsafe impl NSObjectProtocol for NavigationToolbarDelegate {}
+    unsafe impl NSToolbarDelegate for NavigationToolbarDelegate {
+        #[unsafe(method_id(toolbarAllowedItemIdentifiers:))]
+        fn allowed(&self, _toolbar: &NSToolbar) -> Retained<NSArray<NSToolbarItemIdentifier>> {
+            NSArray::from_slice(&[unsafe { NSToolbarToggleSidebarItemIdentifier }, unsafe {
+                NSToolbarFlexibleSpaceItemIdentifier
+            }])
+        }
+
+        #[unsafe(method_id(toolbarDefaultItemIdentifiers:))]
+        fn defaults(&self, _toolbar: &NSToolbar) -> Retained<NSArray<NSToolbarItemIdentifier>> {
+            NSArray::from_slice(&[unsafe { NSToolbarToggleSidebarItemIdentifier }, unsafe {
+                NSToolbarFlexibleSpaceItemIdentifier
+            }])
+        }
+
+        #[unsafe(method_id(toolbar:itemForItemIdentifier:willBeInsertedIntoToolbar:))]
+        fn item(
+            &self,
+            _toolbar: &NSToolbar,
+            identifier: &NSString,
+            _insert: bool,
+        ) -> Option<Retained<NSToolbarItem>> {
+            let item =
+                NSToolbarItem::initWithItemIdentifier(NSToolbarItem::alloc(self.mtm()), identifier);
+            if identifier == unsafe { NSToolbarToggleSidebarItemIdentifier } {
+                item.setLabel(&NSString::from_str("Toggle Sidebar"));
+                item.setImage(
+                    NSImage::imageWithSystemSymbolName_accessibilityDescription(
+                        &NSString::from_str("sidebar.left"),
+                        None,
+                    )
+                    .as_deref(),
+                );
+                unsafe {
+                    item.setAction(Some(sel!(toggleSidebar:)));
+                }
+            }
+            Some(item)
+        }
+    }
+);
+
+pub struct Toolbar {
+    native: Retained<NSToolbar>,
+    delegate: Option<Retained<NavigationToolbarDelegate>>,
+}
 impl Toolbar {
     pub fn new(ui: &Ui, id: &str) -> Self {
-        Self(NSToolbar::initWithIdentifier(
-            NSToolbar::alloc(ui.mtm()),
-            &NSString::from_str(id),
-        ))
+        Self {
+            native: NSToolbar::initWithIdentifier(
+                NSToolbar::alloc(ui.mtm()),
+                &NSString::from_str(id),
+            ),
+            delegate: None,
+        }
     }
 
     pub fn navigation(ui: &Ui, id: &str) -> Self {
-        let toolbar = Self::new(ui, id);
-        toolbar.0.setItemIdentifiers(&NSArray::from_slice(&[
-            unsafe { NSToolbarToggleSidebarItemIdentifier },
-            unsafe { NSToolbarFlexibleSpaceItemIdentifier },
-        ]));
+        let mut toolbar = Self::new(ui, id);
+        let delegate: Retained<NavigationToolbarDelegate> = unsafe {
+            msg_send![
+                super(NavigationToolbarDelegate::alloc(ui.mtm()).set_ivars(())),
+                init
+            ]
+        };
+        toolbar.native.setDelegate(Some(ProtocolObject::from_ref(&*delegate)));
+        toolbar.delegate = Some(delegate);
         toolbar
     }
 
-    pub fn attach(&self, window: &NSWindow) { window.setToolbar(Some(&self.0)); }
+    pub fn attach(&self, window: &NSWindow) {
+        window.setToolbar(Some(&self.native));
+        if self.native.items().is_empty() {
+            self.native.insertItemWithItemIdentifier_atIndex(
+                unsafe { NSToolbarToggleSidebarItemIdentifier },
+                0,
+            );
+            self.native.insertItemWithItemIdentifier_atIndex(
+                unsafe { NSToolbarFlexibleSpaceItemIdentifier },
+                1,
+            );
+        }
+        self.native.setVisible(true);
+    }
 
-    pub fn ns_toolbar(&self) -> &NSToolbar { &self.0 }
+    pub fn ns_toolbar(&self) -> &NSToolbar { &self.native }
 }

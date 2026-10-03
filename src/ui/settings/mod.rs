@@ -104,7 +104,7 @@ impl Settings {
             sidebar,
             host.clone(),
         ));
-        window.ns_window().setContentSize(CGSize::new(980.0, 680.0));
+        window.ns_window().setContentSize(CGSize::new(880.0, 660.0));
         window.ns_window().center();
         Self::select(ui, &model, &host, &pages, 0);
         Self {
@@ -224,11 +224,13 @@ impl FormBuilder {
         });
     }
 
-    fn row(&self, title: &str, control: impl NativeView, message: Rc<ValidationMessage>) -> VStack {
-        VStack::new(&self.ui)
-            .spacing(4.0)
-            .push(SettingsRow::new(&self.ui, title, control))
-            .push(message)
+    fn row(
+        &self,
+        title: &str,
+        control: impl NativeView,
+        message: Rc<ValidationMessage>,
+    ) -> SettingsRow {
+        SettingsRow::with_validation(&self.ui, title, control, message)
     }
 
     fn switch(
@@ -236,7 +238,7 @@ impl FormBuilder {
         title: &str,
         get: impl Fn(&ConfigSource) -> bool + 'static,
         set: impl Fn(&mut ConfigSource, bool) + Send + Clone + 'static,
-    ) -> VStack {
+    ) -> SettingsRow {
         let message = Rc::new(ValidationMessage::new(&self.ui));
         let error = Rc::downgrade(&message);
         let model = self.model.clone();
@@ -271,7 +273,7 @@ impl FormBuilder {
         scale: f64,
         get: impl Fn(&ConfigSource) -> f64 + 'static,
         set: impl Fn(&mut ConfigSource, f64) + Send + Clone + 'static,
-    ) -> VStack {
+    ) -> SettingsRow {
         self.numeric(title, scale, false, get, set)
     }
 
@@ -280,7 +282,7 @@ impl FormBuilder {
         title: &str,
         get: impl Fn(&ConfigSource) -> f64 + 'static,
         set: impl Fn(&mut ConfigSource, f64) + Send + Clone + 'static,
-    ) -> VStack {
+    ) -> SettingsRow {
         self.numeric(title, 1.0, true, get, set)
     }
 
@@ -291,7 +293,7 @@ impl FormBuilder {
         integer: bool,
         get: impl Fn(&ConfigSource) -> f64 + 'static,
         set: impl Fn(&mut ConfigSource, f64) + Send + Clone + 'static,
-    ) -> VStack {
+    ) -> SettingsRow {
         let message = Rc::new(ValidationMessage::new(&self.ui));
         let error = Rc::downgrade(&message);
         let model = self.model.clone();
@@ -318,7 +320,7 @@ impl FormBuilder {
                 );
             }),
         );
-        input.width(100.0);
+        input.width(80.0);
         let weak = Rc::downgrade(&input);
         self.sync.push(Box::new(move |s| {
             if let Some(input) = weak.upgrade() {
@@ -333,7 +335,7 @@ impl FormBuilder {
         title: &str,
         get: impl Fn(&ConfigSource) -> String + 'static,
         set: impl Fn(&mut ConfigSource, String) -> Result<(), String> + Send + Clone + 'static,
-    ) -> VStack {
+    ) -> SettingsRow {
         let message = Rc::new(ValidationMessage::new(&self.ui));
         let error = Rc::downgrade(&message);
         let model = self.model.clone();
@@ -346,7 +348,8 @@ impl FormBuilder {
             let set = set.clone();
             Self::submit(&model, Box::new(move |s| set(s, v)), error.clone());
         }));
-        input.width(250.0);
+        input.min_width(140.0);
+        input.max_width(260.0);
         let weak = Rc::downgrade(&input);
         self.sync.push(Box::new(move |s| {
             if let Some(input) = weak.upgrade() {
@@ -362,7 +365,7 @@ impl FormBuilder {
         values: Vec<(&str, T)>,
         get: impl Fn(&ConfigSource) -> T + 'static,
         set: impl Fn(&mut ConfigSource, T) + Send + Clone + 'static,
-    ) -> VStack {
+    ) -> SettingsRow {
         let message = Rc::new(ValidationMessage::new(&self.ui));
         let error = Rc::downgrade(&message);
         let model = self.model.clone();

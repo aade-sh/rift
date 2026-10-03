@@ -318,7 +318,7 @@ impl RecorderButton {
             conflict: RefCell::new(None),
         });
         let this: Retained<Self> = unsafe { msg_send![super(this), init] };
-        this.setBezelStyle(NSBezelStyle::Push);
+        this.setBezelStyle(crate::control::action_button_bezel());
         unsafe {
             this.setTarget(Some(&this));
             this.setAction(Some(sel!(beginRecording:)));

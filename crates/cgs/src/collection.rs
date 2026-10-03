@@ -342,7 +342,9 @@ impl<T: 'static> Table<T> {
             &NSString::from_str(id),
         );
         column.setTitle(&NSString::from_str(title));
-        column.setWidth(width);
+        if width > 0.0 {
+            column.setWidth(width);
+        }
         self.native.addTableColumn(&column);
         self
     }

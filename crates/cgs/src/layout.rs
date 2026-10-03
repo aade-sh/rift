@@ -272,8 +272,12 @@ impl Disclosure {
                 view.setHidden(!view.isHidden());
             }
         });
+        button.set_title("");
+        button.accessibility_label(title);
+        let heading = HStack::new(ui).push(crate::Label::new(ui, title));
+        heading.ns_stack_view().insertArrangedSubview_atIndex(button.ns_view(), 0);
         let stack = VStack::new(ui);
-        stack.ns_stack_view().addArrangedSubview(button.ns_view());
+        stack.add(heading);
         stack.ns_stack_view().addArrangedSubview(body.ns_view());
         Self { stack, button, body }
     }

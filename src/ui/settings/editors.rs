@@ -77,7 +77,7 @@ fn master<T: Clone + PartialEq + 'static>(
     } else {
         list
     };
-    list.min_width(200.0);
+    list.min_width(140.0);
     list.height(400.0);
     let list = Rc::new(list);
     let weak_list = Rc::downgrade(&list);
@@ -100,13 +100,11 @@ fn master<T: Clone + PartialEq + 'static>(
             }
         }
     }));
-    f.finish(
-        SettingsPage::new(&ui, title).section(Section::new(&ui, "").row(MasterDetail::new(
-            &ui,
-            VStack::new(&ui).push(list).push(message),
-            host,
-        ))),
-    )
+    let detail = MasterDetail::new(&ui, VStack::new(&ui).push(list).push(message), host);
+    detail.min_height(420.0);
+    let page = SettingsPage::new(&ui, title).section(detail);
+    page.min_height(460.0);
+    f.finish(page)
 }
 
 pub(super) fn workspaces(ui: Ui, model: &Rc<Model>) -> Page {
@@ -257,11 +255,7 @@ pub(super) fn workspaces(ui: Ui, model: &Rc<Model>) -> Page {
     );
     let editor_sync = editor.sync;
     f.sync.extend(editor_sync);
-    f.finish(
-        SettingsPage::new(&ui, "Workspaces")
-            .section(section)
-            .section(Section::new(&ui, "Workspaces").row(editor.view)),
-    )
+    f.finish(SettingsPage::new(&ui, "Workspaces").section(section).section(editor.view))
 }
 
 fn resize_workspaces(s: &mut ConfigSource, count: usize) {
@@ -319,7 +313,7 @@ fn workspace_popup(
     optional: bool,
     get: impl Fn(&ConfigSource) -> Option<WorkspaceSelector> + 'static,
     set: impl Fn(&mut ConfigSource, Option<WorkspaceSelector>) + Copy + Send + 'static,
-) -> VStack {
+) -> SettingsRow {
     let message = Rc::new(ValidationMessage::new(&f.ui));
     let error = Rc::downgrade(&message);
     let model = f.model.clone();
@@ -502,11 +496,11 @@ fn rule_detail(ui: Ui, model: &Rc<Model>, i: usize) -> Page {
                 Ok(())
             },
         );
-        matches = matches.row(if field >= 3 {
-            VStack::new(&ui).push(Disclosure::new(&ui, title, row))
+        matches = if field >= 3 {
+            matches.row(Disclosure::new(&ui, title, row))
         } else {
-            row
-        });
+            matches.row(row)
+        };
     }
     let workspace = workspace_popup(
         &mut f,
@@ -683,7 +677,7 @@ pub(super) fn strings(
     Section::new(&ui, title)
         .row(list)
         .row(HStack::new(&ui).push(field).push(add))
-        .row(message)
+        .footer(message)
 }
 
 pub(super) fn display_overrides(
