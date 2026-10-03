@@ -1,7 +1,7 @@
 use std::cell::RefCell;
 
 use objc2::rc::Retained;
-use objc2::{MainThreadOnly, define_class, msg_send};
+use objc2::{DefinedClass, MainThreadOnly, define_class, msg_send};
 use objc2_app_kit::{
     NSAccessibility, NSControl, NSControlSize, NSLayoutAttribute, NSLayoutConstraint,
     NSLayoutRelation, NSUserInterfaceItemIdentification, NSView, NSViewController,
@@ -221,4 +221,135 @@ impl Metrics {
     pub const SECTION_SPACING: f64 = 18.0;
     pub const SIDEBAR_MIN_WIDTH: f64 = 160.0;
     pub const SIDEBAR_WIDTH: f64 = 200.0;
+}
+
+struct ResponsiveContent {
+    wide: Box<dyn NativeView>,
+    compact: Box<dyn NativeView>,
+    size: crate::CGSize,
+}
+define_class!(
+    #[unsafe(super(NSView))]
+    #[thread_kind = MainThreadOnly]
+    #[name = "CgsResponsiveView"]
+    #[ivars = ResponsiveContent]
+    struct ResponsiveNativeView;
+    impl ResponsiveNativeView {
+        #[unsafe(method(intrinsicContentSize))]
+        fn intrinsic_size(&self) -> crate::CGSize {
+            crate::CGSize::new(-1.0, self.ivars().size.height)
+        }
+        #[unsafe(method(layout))]
+        fn layout_content(&self) {
+            unsafe { let _: () = msg_send![super(self), layout]; }
+            let content = self.ivars();
+            let width = self.bounds().size.width;
+            let compact = width < content.size.width;
+            content.wide.set_hidden(compact);
+            content.compact.set_hidden(!compact);
+            let view = if compact { content.compact.ns_view() } else { content.wide.ns_view() };
+            let size = view.fittingSize();
+            view.setFrame(crate::CGRect::new(crate::CGPoint::new(0.0, 0.0), crate::CGSize::new(size.width.min(width), content.size.height)));
+        }
+    }
+);
+
+/// Uses a compact native alternative when the preferred content no longer fits.
+pub struct ResponsiveView(Retained<ResponsiveNativeView>);
+impl ResponsiveView {
+    pub fn new(ui: &Ui, wide: impl NativeView, compact: impl NativeView) -> Self {
+        let mut size = wide.ns_view().fittingSize();
+        size.height = size.height.max(compact.ns_view().fittingSize().height);
+        let native: Retained<ResponsiveNativeView> = unsafe {
+            msg_send![
+                super(
+                    ResponsiveNativeView::alloc(ui.mtm()).set_ivars(ResponsiveContent {
+                        wide: Box::new(wide),
+                        compact: Box::new(compact),
+                        size,
+                    })
+                ),
+                init
+            ]
+        };
+        native.addSubview(native.ivars().wide.ns_view());
+        native.addSubview(native.ivars().compact.ns_view());
+        native.ivars().compact.set_hidden(true);
+        Self(native)
+    }
+}
+impl NativeView for ResponsiveView {
+    fn ns_view(&self) -> &NSView { &self.0 }
+}
+
+/// Apple's native glass surface, falling back to unmodified content before macOS 26.
+pub struct GlassEffectView {
+    native: Option<Retained<objc2_app_kit::NSGlassEffectView>>,
+    content: Box<dyn NativeView>,
+}
+#[derive(Clone, Copy, Debug, Default)]
+pub enum GlassStyle {
+    #[default]
+    Regular,
+    Clear,
+}
+impl GlassEffectView {
+    pub fn new(ui: &Ui, content: impl NativeView) -> Self {
+        let native = objc2::runtime::AnyClass::get(c"NSGlassEffectView").map(|_| {
+            let view = objc2_app_kit::NSGlassEffectView::new(ui.mtm());
+            view.setContentView(Some(content.ns_view()));
+            pin(&view, content.ns_view(), Insets {
+                top: 0.0,
+                left: 0.0,
+                bottom: 0.0,
+                right: 0.0,
+            });
+            view
+        });
+        Self {
+            native,
+            content: Box::new(content),
+        }
+    }
+
+    pub fn style(self, style: GlassStyle) -> Self {
+        if let Some(view) = &self.native {
+            view.setStyle(match style {
+                GlassStyle::Regular => objc2_app_kit::NSGlassEffectViewStyle::Regular,
+                GlassStyle::Clear => objc2_app_kit::NSGlassEffectViewStyle::Clear,
+            });
+        }
+        self
+    }
+
+    pub fn corner_radius(self, radius: f64) -> Self {
+        if let Some(view) = &self.native {
+            view.setCornerRadius(radius);
+        }
+        self
+    }
+
+    /// Interactive glass is available on macOS 27 and newer.
+    pub fn interactive(self, interactive: bool) -> Self {
+        if let Some(view) = &self.native {
+            let supported: bool = unsafe {
+                msg_send![view, respondsToSelector: objc2::sel!(setEffectIsInteractive:)]
+            };
+            if supported {
+                let _: () = unsafe { msg_send![view, setEffectIsInteractive: interactive] };
+            }
+        }
+        self
+    }
+
+    pub fn ns_glass_effect_view(&self) -> Option<&objc2_app_kit::NSGlassEffectView> {
+        self.native.as_deref()
+    }
+}
+impl NativeView for GlassEffectView {
+    fn ns_view(&self) -> &NSView {
+        self.native
+            .as_ref()
+            .map_or_else(|| self.content.ns_view(), |view| view.as_ref())
+    }
 }

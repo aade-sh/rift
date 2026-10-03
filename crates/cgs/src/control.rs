@@ -45,10 +45,6 @@ impl Button {
         Self { native, target }
     }
 
-    pub(crate) fn target_set(&self, mut f: impl FnMut() + 'static) {
-        self.target.set(move |_| f());
-    }
-
     pub fn on_click(self, mut f: impl FnMut() + 'static) -> Self {
         self.target.set(move |_| f());
         self

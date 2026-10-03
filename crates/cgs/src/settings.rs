@@ -61,6 +61,7 @@ impl NativeView for Badge {
 pub struct SettingsRow {
     ui: Ui,
     stack: VStack,
+    line: Rc<HStack>,
     control: Box<dyn NativeView>,
     validation: Rc<ValidationMessage>,
 }
@@ -76,14 +77,15 @@ impl SettingsRow {
         validation: Rc<ValidationMessage>,
     ) -> Self {
         let label = WrappingLabel::new(ui, title);
-        let line = HStack::new(ui).push(label).spacer(ui);
+        let line = Rc::new(HStack::new(ui).push(label).spacer(ui));
         control.accessibility_label(title);
         line.ns_stack_view().addArrangedSubview(control.ns_view());
-        let stack = VStack::new(ui).spacing(4.0).push(line);
+        let stack = VStack::new(ui).spacing(4.0).push(line.clone());
         stack.ns_stack_view().addArrangedSubview(validation.ns_view());
         Self {
             ui: *ui,
             stack,
+            line,
             control: Box::new(control),
             validation,
         }
@@ -95,7 +97,7 @@ impl SettingsRow {
     }
 
     pub fn suffix(self, text: &str) -> Self {
-        self.stack.add(Caption::new(&self.ui, text));
+        self.line.add(SecondaryLabel::new(&self.ui, text));
         self
     }
 
@@ -145,7 +147,9 @@ pub struct SettingsGroup {
 impl SettingsGroup {
     pub fn new(ui: &Ui) -> Self {
         let native = NSBox::new(ui.mtm());
-        native.setBoxType(NSBoxType::Primary);
+        native.setBoxType(NSBoxType::Custom);
+        native.setTransparent(true);
+        native.setBorderWidth(0.0);
         native.setTitlePosition(NSTitlePosition::NoTitle);
         native.setContentViewMargins(CGSize::new(0.0, 0.0));
         let rows = VStack::new(ui).spacing(0.0);
@@ -169,9 +173,9 @@ impl SettingsGroup {
         self.rows.add(
             VStack::new(&self.ui)
                 .insets(Insets {
-                    top: 9.0,
+                    top: 8.0,
                     left: 12.0,
-                    bottom: 9.0,
+                    bottom: 8.0,
                     right: 12.0,
                 })
                 .push(row),
@@ -195,6 +199,10 @@ impl Section {
             stack = stack.push(SectionTitle::new(ui, title));
         }
         Self { ui: *ui, stack, group: None }
+    }
+
+    pub fn subsection(ui: &Ui, title: &str) -> Self {
+        Self::new(ui, "").content(SubsectionTitle::new(ui, title))
     }
 
     pub fn description(self, text: &str) -> Self {
