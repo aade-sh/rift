@@ -1466,6 +1466,137 @@ mod tests {
 
     use super::*;
 
+    #[test]
+    fn focus_inventory_preserves_scrolling_animation_targets() {
+        use crate::actor::reactor::testing::{make_windows, test_context};
+        use crate::common::config::LayoutMode;
+        use crate::layout_engine::{Direction, LayoutCommand, LayoutEvent};
+        let (mut apps, mut reactor) = test_context();
+        let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(600., 600.));
+        let space = SpaceId::new(1);
+        apps.make_app_and_settle_on_screen(&mut reactor, screen, space, 1, make_windows(6));
+        reactor.handle_test_layout_command(LayoutCommand::SetWorkspaceLayout {
+            workspace: None,
+            mode: LayoutMode::Scrolling,
+        });
+        apps.simulate_until_quiet(&mut reactor);
+        reactor.send_layout_event(LayoutEvent::WindowFocused(space, WindowId::new(1, 3)));
+        apps.simulate_until_quiet(&mut reactor);
+        apps.requests();
+        let (tx, rx) = AnimationSender::channel();
+        reactor.animation_tx = Some(tx);
+        reactor.config.settings.animate = true;
+        let mut manager = AnimationManager::new();
+        for direction in [Direction::Right, Direction::Left].into_iter().cycle().take(8) {
+            reactor.handle_test_layout_command(LayoutCommand::MoveFocus(direction));
+            while let Ok(message) = rx.commands.try_recv() {
+                manager.handle_message(message);
+            }
+            let now = std::time::Instant::now();
+            manager.tick_at(now);
+            manager.publish_frames(&mut rx.frames.lock(), false);
+            camera_mut(&mut manager).unwrap().publish_state(now);
+            reactor.handle_event(crate::actor::reactor::Event::WindowServerUnhidden(
+                reactor.test_window_server_id(
+                    reactor.layout_manager.layout_engine.focused_window().unwrap(),
+                ),
+            ));
+            let snapshots: Vec<_> = reactor
+                .state
+                .windows
+                .iter_windows()
+                .filter_map(|(wid, window)| {
+                    let target = reactor
+                        .transaction_manager
+                        .get_target_frame(window.info.sys_id.unwrap())?;
+                    let mut info = window.info.clone();
+                    info.frame = CGRect::new(CGPoint::new(-900., 38.), CGSize::new(300., 500.));
+                    Some((wid, info, target))
+                })
+                .collect();
+            assert!(!snapshots.is_empty(), "focus motion must be in progress");
+            let requests = apps
+                .requests()
+                .into_iter()
+                .filter(|request| !matches!(request, Request::RefreshWindowInventory(_)))
+                .collect();
+            reactor.handle_events(apps.simulate_events_for_requests(requests));
+            let (workspace, layout) = reactor
+                .layout_manager
+                .layout_engine
+                .workspaces()
+                .active_layout_for_space(space)
+                .unwrap();
+            let crate::layout_engine::LayoutSystemKind::Scrolling(system) =
+                &reactor.layout_manager.layout_engine.workspaces()[workspace].layout_system
+            else {
+                panic!("scrolling layout");
+            };
+            let (trajectory, frames) = system.presentation(layout).unwrap();
+            reactor.update_partial_window_server_info(
+                snapshots
+                    .iter()
+                    .map(|(_, info, _)| crate::sys::window_server::WindowServerInfo {
+                        id: info.sys_id.unwrap(),
+                        pid: 1,
+                        layer: 0,
+                        frame: info.frame,
+                        min_frame: info.frame.size,
+                        max_frame: info.frame.size,
+                    })
+                    .collect(),
+            );
+            reactor.discover_test_windows(
+                1,
+                snapshots.iter().map(|(wid, info, _)| (*wid, info.clone())).collect(),
+                snapshots.iter().map(|(wid, _, _)| *wid).collect(),
+            );
+            for (wid, _, target) in snapshots {
+                assert!(
+                    reactor.state.windows.window(wid).unwrap().frame_monotonic.same_as(target),
+                    "inventory must retain the animation target for {wid:?}"
+                );
+            }
+            while let Ok(message) = rx.commands.try_recv() {
+                manager.handle_message(message);
+            }
+            let after = std::time::Instant::now();
+            manager.tick_at(after);
+            let requests = apps.requests();
+            assert!(
+                requests.iter().all(|request| !matches!(
+                    request,
+                    Request::BeginWindowAnimation(_) | Request::EndWindowAnimation(_)
+                )),
+                "inventory reconciliation must retain the active animation lease"
+            );
+            reactor.handle_events(apps.simulate_events_for_requests(requests));
+            let offset = trajectory.position_velocity(after).0;
+            for (wid, frame, fixed) in frames {
+                let expected = trajectory.frame_at_offset(frame, fixed, 1.0, offset);
+                let actual = apps.windows[&wid].frame;
+                assert!(
+                    actual.size.same_as(expected.size)
+                        && (actual.origin.x - expected.origin.x).abs() <= 1.0
+                        && (actual.origin.y - expected.origin.y).abs() <= 1.0,
+                    "inventory must preserve the spring trajectory for {wid:?}: {expected:?} -> {actual:?}"
+                );
+            }
+        }
+        manager.tick_at(std::time::Instant::now() + std::time::Duration::from_secs(10));
+        apps.simulate_until_quiet(&mut reactor);
+        let wid = WindowId::new(1, 1);
+        let mut info = reactor.state.windows.window(wid).unwrap().info.clone();
+        assert!(reactor.transaction_manager.get_target_frame(info.sys_id.unwrap()).is_none());
+        let external = CGRect::new(CGPoint::new(10., 20.), CGSize::new(350., 550.));
+        info.frame = external;
+        reactor.discover_test_windows(1, vec![(wid, info)], vec![wid]);
+        assert!(
+            reactor.state.windows.window(wid).unwrap().frame_monotonic.same_as(external),
+            "inventory must accept external geometry after animation completion"
+        );
+    }
+
     fn rect(origin_x: f64, origin_y: f64, width: f64, height: f64) -> CGRect {
         CGRect::new(CGPoint::new(origin_x, origin_y), CGSize::new(width, height))
     }

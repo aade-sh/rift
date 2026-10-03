@@ -2775,7 +2775,12 @@ impl Reactor {
     }
 
     fn update_partial_window_server_info(&mut self, ws_info: Vec<WindowServerInfo>) {
-        for info in ws_info {
+        for mut info in ws_info {
+            // Inventory reads have no write ordering. An in-flight transaction owns
+            // geometry until its completion; native visibility/metadata still reconcile.
+            if let Some(target) = self.transaction_manager.get_target_frame(info.id) {
+                info.frame = target;
+            }
             if let Some(wid) = self.state.windows.observe_native_window(info)
                 && utils::refresh_heuristic(&mut self.state, wid)
                     .is_some_and(|transition| transition.was_admitted && !transition.is_admitted)
@@ -3300,7 +3305,14 @@ impl Reactor {
         }
         let observed_windows = new
             .into_iter()
-            .map(|(wid, info)| {
+            .map(|(wid, mut info)| {
+                // AX inventory can sample Rift's own intermediate/offscreen frame.
+                // Keep the semantic target authoritative without dropping discovery.
+                if let Some(target) =
+                    info.sys_id.and_then(|wsid| self.transaction_manager.get_target_frame(wsid))
+                {
+                    info.frame = target;
+                }
                 let current_native_space = info.sys_id.and_then(|wsid| native_spaces[&wsid]);
                 let active_space = self
                     .space_for_window_observation(&info.frame, info.sys_id, || current_native_space)
