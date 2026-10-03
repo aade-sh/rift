@@ -80,7 +80,7 @@ impl NativeView for Retained<NSView> {
     fn ns_view(&self) -> &NSView { self }
 }
 
-impl<T: NativeView> NativeView for std::rc::Rc<T> {
+impl<T: NativeView + ?Sized> NativeView for std::rc::Rc<T> {
     fn ns_view(&self) -> &NSView { (**self).ns_view() }
 
     fn view_controller(&self) -> Option<&NSViewController> { (**self).view_controller() }

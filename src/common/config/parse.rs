@@ -156,6 +156,7 @@ impl Config {
                     binding_sets.iter().map(|(name, _)| name.clone()).collect();
                 for (mode, bindings) in binding_sets {
                     let mut specs = Vec::with_capacity(bindings.len());
+                    let mut assigned = HashSet::default();
                     for (key, cmd) in bindings {
                         let expanded_key =
                             Self::expand_modifier_combinations(&key, &c.modifier_combinations);
@@ -163,6 +164,13 @@ impl Config {
                         let Ok(hotkey) = Hotkey::from_str(&normalized_key) else {
                             bail!("Could not parse hotkey `{key}` in binding mode `{mode}`");
                         };
+                        for modifiers in hotkey.modifiers.expand_to_specific() {
+                            if !assigned.insert(Hotkey::new(modifiers, hotkey.key_code)) {
+                                bail!(
+                                    "Shortcut `{key}` conflicts with another binding in keymap `{mode}`"
+                                );
+                            }
+                        }
                         if let WmCommand::Wm(crate::actor::wm_controller::WmCmd::BindingMode(
                             target,
                         )) = &cmd

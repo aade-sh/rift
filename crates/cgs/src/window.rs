@@ -1,5 +1,6 @@
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 
 use block2::RcBlock;
 use objc2::MainThreadOnly;
@@ -374,14 +375,23 @@ pub struct PathField {
     stack: crate::HStack,
     field: crate::TextField,
     choose: crate::Button,
+    directories: Rc<Cell<bool>>,
 }
 impl PathField {
     pub fn new(ui: &Ui) -> Self {
         let field = crate::TextField::new(ui);
         let weak = Weak::new(field.ns_text_field());
         let ui_copy = *ui;
+        let directories = Rc::new(Cell::new(false));
+        let directory_mode = directories.clone();
         let choose = crate::Button::new(ui, "Choose…").on_click(move || {
-            if let Some(path) = OpenPanel::new(&ui_copy).choose() {
+            let panel = OpenPanel::new(&ui_copy);
+            let panel = if directory_mode.get() {
+                panel.directories()
+            } else {
+                panel
+            };
+            if let Some(path) = panel.choose() {
                 if let Some(field) = weak.load() {
                     field.setStringValue(&NSString::from_str(&path.to_string_lossy()));
                 }
@@ -390,7 +400,17 @@ impl PathField {
         let stack = crate::HStack::new(ui);
         stack.ns_stack_view().addArrangedSubview(field.ns_view());
         stack.ns_stack_view().addArrangedSubview(choose.ns_view());
-        Self { stack, field, choose }
+        Self {
+            stack,
+            field,
+            choose,
+            directories,
+        }
+    }
+
+    pub fn directories(self) -> Self {
+        self.directories.set(true);
+        self
     }
 
     pub fn set_value(&self, path: &Path) { self.field.set_value(&path.to_string_lossy()); }
@@ -402,6 +422,7 @@ impl PathField {
         self.field = self.field.on_commit(move |s| (c.borrow_mut())(PathBuf::from(s)));
         let weak = Weak::new(self.field.ns_text_field());
         let ui = Ui::new(self.field.ns_text_field().mtm());
+        let directories = self.directories.clone();
         self.choose = self.choose.on_click(move || {
             if let Some(field) = weak.load() {
                 let cb = cb.clone();
@@ -415,6 +436,11 @@ impl PathField {
                     }
                 };
                 let panel = OpenPanel::new(&ui);
+                let panel = if directories.get() {
+                    panel.directories()
+                } else {
+                    panel
+                };
                 if let Some(window) = field.window() {
                     panel.show_sheet(&window, apply);
                 } else {

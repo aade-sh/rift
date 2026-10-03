@@ -44,6 +44,12 @@ impl Button {
         self
     }
 
+    pub fn key_equivalent(self, value: &str) -> Self {
+        self.native.setKeyEquivalent(&NSString::from_str(value));
+        self.native.setKeyEquivalentModifierMask(NSEventModifierFlags::empty());
+        self
+    }
+
     pub fn set_title(&self, title: &str) { self.native.setTitle(&NSString::from_str(title)); }
 
     pub fn borderless(self) -> Self {

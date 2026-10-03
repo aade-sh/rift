@@ -83,6 +83,7 @@ pub enum MenuAction {
     OpenMatrix,
     OpenSponsor,
     OpenConfig,
+    OpenSettings,
     ReloadConfig,
     QuitRift,
 }
@@ -796,13 +797,15 @@ fn build_static_menu(mtm: MainThreadMarker, handler: &Rc<MenuActionHandler>) -> 
         "Reload Config",
         MenuActionHandler::on_reload_config,
     );
-    add_action_item(
+    let settings_item = add_action_item(
         &menu,
         mtm,
         handler,
         "Settings…",
-        MenuActionHandler::on_open_config,
+        MenuActionHandler::on_open_settings,
     );
+    settings_item.setKeyEquivalent(&NSString::from_str(","));
+    settings_item.setKeyEquivalentModifierMask(NSEventModifierFlags::Command);
 
     add_separator(&menu);
     let (_, help_menu) = add_submenu(&menu, mtm, "Help");
@@ -1175,7 +1178,9 @@ impl MenuActionHandler {
         }
     }
 
-    fn on_open_config(&self, _sender: Option<&NSMenuItem>) { self.emit(MenuAction::OpenConfig); }
+    fn on_open_settings(&self, _sender: Option<&NSMenuItem>) {
+        self.emit(MenuAction::OpenSettings);
+    }
 
     fn on_open_documentation(&self, _sender: Option<&NSMenuItem>) {
         self.emit(MenuAction::OpenDocumentation);

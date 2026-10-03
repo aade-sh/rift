@@ -5,13 +5,25 @@ use serde::{Deserialize, Serialize};
 use tracing::{debug, info};
 
 use crate::actor::{self, reactor};
-use crate::common::config::{Config, ConfigCommand, ConfigDocument, MAX_WORKSPACES};
+use crate::common::config::{Config, ConfigCommand, ConfigDocument, ConfigSource, MAX_WORKSPACES};
 
 pub type Sender = actor::Sender<Event>;
 pub type Receiver = actor::Receiver<Event>;
 
-#[derive(Serialize, Deserialize, Debug)]
+/// A typed transaction executed only against the actor’s authoritative source.
+pub type SourceEdit = Box<dyn FnOnce(&mut ConfigSource) -> Result<(), String> + Send>;
+
+#[derive(Serialize, Deserialize)]
 pub enum Event {
+    #[serde(skip)]
+    QuerySource(tokio::sync::oneshot::Sender<Result<ConfigSource, String>>),
+    #[serde(skip)]
+    ReloadSource(tokio::sync::oneshot::Sender<Result<ConfigSource, String>>),
+    #[serde(skip)]
+    EditSource {
+        edit: SourceEdit,
+        response: tokio::sync::oneshot::Sender<Result<ConfigSource, String>>,
+    },
     #[serde(skip)]
     QueryConfig(SyncSender<Config>),
     #[serde(skip)]
@@ -63,6 +75,19 @@ impl ConfigActor {
     fn run(mut self, mut events: Receiver) {
         while let Some((_span, event)) = events.blocking_recv() {
             match event {
+                Event::ReloadSource(response) => {
+                    let result = self
+                        .handle_config_command(ConfigCommand::ReloadConfig)
+                        .and_then(|()| self.document.source().map_err(|e| e.to_string()));
+                    let _ = response.send(result);
+                }
+                Event::QuerySource(response) => {
+                    let _ = response.send(self.document.source().map_err(|e| e.to_string()));
+                }
+                Event::EditSource { edit, response } => {
+                    let result = self.edit_source(edit);
+                    let _ = response.send(result);
+                }
                 Event::QueryConfig(resp) => {
                     let _ = resp.send(self.config.clone());
                 }
@@ -72,6 +97,22 @@ impl ConfigActor {
                 }
             }
         }
+    }
+
+    fn edit_source(&mut self, edit: SourceEdit) -> Result<ConfigSource, String> {
+        let mut candidate = self.document.clone();
+        let mut edit_result = Ok(());
+        let config = candidate
+            .update(|source| edit_result = edit(source))
+            .map_err(|e| e.to_string())?;
+        edit_result?;
+        // Persistence is part of the transaction: failed saves never publish or commit.
+        candidate.save(&self.config_path).map_err(|e| e.to_string())?;
+        let source = candidate.source().map_err(|e| e.to_string())?;
+        self.document = candidate;
+        self.config = config;
+        self.reactor_tx.send(reactor::Event::ConfigUpdated(self.config.clone()));
+        Ok(source)
     }
 
     fn handle_config_command(&mut self, cmd: ConfigCommand) -> Result<(), String> {
@@ -228,6 +269,115 @@ mod tests {
             external.replace("animation_duration = 0.3", "animation_duration = 0.2")
         );
         assert_eq!(Config::read(&path).unwrap().settings.animation_duration, 0.2);
+    }
+
+    #[test]
+    fn settings_transactions_save_source_and_rollback_validation_and_io_failures() {
+        use crate::actor::wm_controller::{WmCmd, WmCommand};
+        use crate::common::config::{
+            AppWorkspaceRule, LayoutMode, WorkspaceLayoutRule, WorkspaceSelector,
+        };
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("config.toml");
+        let text = "# personal settings\n[settings]\nanimate = false # retain this comment\n[virtual_workspaces]\nworkspace_names = [\"Main\", \"Code\"]\n[keys]\n";
+        std::fs::write(&path, text).unwrap();
+        let document = ConfigDocument::read(&path).unwrap();
+        let (reactor_tx, mut updates) = actor::channel();
+        let mut actor = ConfigActor {
+            config: document.runtime().unwrap(),
+            document,
+            reactor_tx,
+            config_path: path.clone(),
+        };
+        let source = actor
+            .edit_source(Box::new(|s| {
+                s.settings.animate = true;
+                s.virtual_workspaces.workspace_names[1] = "Development".into();
+                s.virtual_workspaces.workspace_rules.push(WorkspaceLayoutRule {
+                    workspace: WorkspaceSelector::Index(1),
+                    layout: LayoutMode::Scrolling,
+                });
+                s.virtual_workspaces.app_rules.push(AppWorkspaceRule {
+                    app_id: Some("com.apple.Safari".into()),
+                    manage: Some(false),
+                    ..Default::default()
+                });
+                s.virtual_workspaces.app_rules.push(AppWorkspaceRule {
+                    app_id: Some("com.apple.Terminal".into()),
+                    ..Default::default()
+                });
+                s.virtual_workspaces.app_rules.swap(0, 1);
+                s.binding_modes.insert(
+                    "resize".into(),
+                    [(
+                        "Alt + R".into(),
+                        WmCommand::Wm(WmCmd::BindingMode("default".into())),
+                    )]
+                    .into(),
+                );
+                s.keys.insert("Alt + H".into(), WmCommand::Wm(WmCmd::CloseWindow));
+                Ok(())
+            }))
+            .unwrap();
+        let saved = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            saved.starts_with(
+                "# personal settings\n[settings]\nanimate = true # retain this comment"
+            )
+        );
+        assert!(!saved.contains("animation_duration"));
+        assert_eq!(source.virtual_workspaces.workspace_names[1], "Development");
+        assert_eq!(
+            source.virtual_workspaces.app_rules[0].app_id.as_deref(),
+            Some("com.apple.Terminal")
+        );
+        assert_eq!(Config::read(&path).unwrap().binding_mode_specs.len(), 2);
+        assert!(updates.try_recv().is_ok());
+        let document_before = actor.document.to_string();
+        assert!(
+            actor
+                .edit_source(Box::new(|s| {
+                    s.virtual_workspaces.app_rules[0].title_regex = Some("[".into());
+                    Ok(())
+                }))
+                .is_err()
+        );
+        assert!(
+            actor
+                .edit_source(Box::new(|s| {
+                    s.keys.insert("Option + H".into(), WmCommand::Wm(WmCmd::NextWorkspace));
+                    Ok(())
+                }))
+                .is_err()
+        );
+        assert_eq!(actor.document.to_string(), document_before);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), saved);
+        assert!(updates.try_recv().is_err());
+        actor.config_path = directory.path().to_path_buf(); // atomic replacement of a directory must fail
+        assert!(
+            actor
+                .edit_source(Box::new(|s| {
+                    s.settings.animate = false;
+                    Ok(())
+                }))
+                .is_err()
+        );
+        assert!(actor.config.settings.animate);
+        assert_eq!(actor.document.to_string(), document_before);
+        assert!(updates.try_recv().is_err());
+        actor.config_path = path.clone();
+        actor
+            .edit_source(Box::new(|s| {
+                s.virtual_workspaces.app_rules.remove(1);
+                s.keys.remove("Alt + H");
+                s.binding_modes.remove("resize");
+                Ok(())
+            }))
+            .unwrap();
+        let roundtrip = ConfigDocument::read(&path).unwrap().source().unwrap();
+        assert_eq!(roundtrip.virtual_workspaces.app_rules.len(), 1);
+        assert!(roundtrip.keys.is_empty());
+        assert!(roundtrip.binding_modes.is_empty());
     }
 
     #[test]
