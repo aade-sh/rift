@@ -1898,6 +1898,7 @@ impl Reactor {
                 return Ok(outcome);
             }
             Event::MouseUp(button) => {
+                let had_drag = self.drag_manager.actor.source().is_some();
                 let final_space = self.drag_manager.actor.source().and_then(|source| {
                     let frame_space = || self.best_space_for_frame(&source.last_frame);
                     if self.drag_manager.actor.kind()
@@ -1913,16 +1914,17 @@ impl Reactor {
                             .or_else(|| self.best_space_for_window_id(source.window))
                     }
                 });
-                let focused = self.window_id_under_cursor().and_then(|window| {
-                    self.best_space_for_window_id(window).map(|space| (space, window))
-                });
                 let mut outcome = interaction_workflow::handle_mouse_up(
                     &mut self.state,
                     &mut self.layout_manager,
                     &mut self.drag_manager,
                     interaction_workflow::MouseUpPayload { button, final_space },
                 )?;
-                if let Some((space, window)) = focused {
+                if had_drag
+                    && !self.drag_manager.actor.is_active()
+                    && let Some(window) = self.window_id_under_cursor()
+                    && let Some(space) = self.best_space_for_window_id(window)
+                {
                     outcome = outcome.with_layout_event(LayoutEvent::WindowFocused(space, window));
                 }
                 return Ok(outcome);

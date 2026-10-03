@@ -851,7 +851,7 @@ impl Input {
                     crate::actor::drag::MouseButton::Right
                 };
                 let captured = self.state.borrow().captured_button == Some(button);
-                if self.state.borrow().mouse_features_enabled {
+                if captured || self.native_motion_active.load(Ordering::Acquire) {
                     self.events_tx.send(Event::MouseUp(button));
                 }
                 if captured {
@@ -2080,7 +2080,7 @@ mod tests {
     }
 
     #[test]
-    fn releases_are_always_forwarded_when_mouse_features_are_enabled() {
+    fn releases_are_forwarded_only_for_captured_or_native_drags() {
         let (input, _, mut events_rx) = input();
         input.state.borrow_mut().mouse_features_enabled = false;
         let event = CGEvent::new_mouse_event(
@@ -2094,10 +2094,15 @@ mod tests {
         assert!(events_rx.try_recv().is_err());
         input.state.borrow_mut().mouse_features_enabled = true;
         assert!(input.on_event(CGEventType::LeftMouseUp, &event, None));
+        assert!(events_rx.try_recv().is_err());
+        input.state.borrow_mut().captured_button = Some(crate::actor::drag::MouseButton::Left);
+        assert!(!input.on_event(CGEventType::LeftMouseUp, &event, None));
+        assert_eq!(input.state.borrow().captured_button, None);
         assert!(matches!(
             events_rx.try_recv().unwrap().1,
             Event::MouseUp(crate::actor::drag::MouseButton::Left)
         ));
+        input.native_motion_active.store(true, Ordering::Release);
         assert!(input.on_event(CGEventType::LeftMouseUp, &event, None));
         assert!(matches!(
             events_rx.try_recv().unwrap().1,
@@ -2125,10 +2130,7 @@ mod tests {
             input.state.borrow().captured_button,
             Some(crate::actor::drag::MouseButton::Left)
         );
-        assert!(matches!(
-            events_rx.try_recv().unwrap().1,
-            Event::MouseUp(crate::actor::drag::MouseButton::Right)
-        ));
+        assert!(events_rx.try_recv().is_err());
     }
 
     #[test]

@@ -1698,6 +1698,93 @@ fn duplicate_minimize_deminimize_and_unknown_window_events_do_not_arrange() {
 }
 
 #[test]
+fn mouse_release_arranges_only_completed_tiled_drags() {
+    for modifier in [false, true] {
+        for tiled in [false, true] {
+            let (mut reactor, wid, _, space, _, frame) = reactor_with_window_on_space1();
+            let ordinary = reactor
+                .dispatch_workflow(Event::MouseUp(crate::actor::drag::MouseButton::Left))
+                .unwrap();
+            assert_eq!(ordinary.arrange.passes, 0);
+            assert!(ordinary.layout_events.is_empty());
+            let source = crate::actor::drag::DragSource {
+                window: wid,
+                origin_frame: frame,
+                last_frame: frame,
+                origin_space: Some(space),
+                current_space: Some(space),
+                tiled,
+            };
+            if modifier {
+                reactor.drag_manager.actor.begin_modifier(
+                    source,
+                    frame.origin,
+                    crate::common::config::MouseAction::Move,
+                    crate::actor::drag::DragScene::default(),
+                );
+            } else {
+                reactor
+                    .drag_manager
+                    .actor
+                    .begin_native(source, crate::actor::drag::DragScene::default());
+            }
+            let wrong_button = reactor
+                .dispatch_workflow(Event::MouseUp(crate::actor::drag::MouseButton::Right))
+                .unwrap();
+            assert_eq!(wrong_button.arrange.passes, 0);
+            assert!(wrong_button.layout_events.is_empty());
+            assert!(reactor.drag_manager.actor.is_active());
+            let released = reactor
+                .dispatch_workflow(Event::MouseUp(crate::actor::drag::MouseButton::Left))
+                .unwrap();
+            assert_eq!(released.arrange.passes, u8::from(tiled));
+            assert!(!reactor.drag_manager.actor.is_active());
+        }
+    }
+}
+
+#[test]
+fn ordinary_mouse_release_preserves_in_progress_scrolling_animation() {
+    let (mut apps, mut reactor) = test_context();
+    let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1512., 982.));
+    let space = SpaceId::new(1);
+    apps.make_app_and_settle_on_screen(&mut reactor, screen, space, 1, make_windows(2));
+    apps.requests();
+    let (tx, rx) = super::animation::AnimationSender::channel();
+    reactor.animation_tx = Some(tx);
+    reactor.config.settings.animate = true;
+    let mut manager = super::animation::AnimationManager::new();
+    let window = WindowId::new(1, 1);
+    let target = CGRect::new(CGPoint::new(-1056., 38.), CGSize::new(1284., 944.));
+    assert!(super::animation::AnimationManager::animate_layout(
+        &mut reactor,
+        space,
+        &[(window, target)],
+        false,
+        None
+    ));
+    manager.handle_message(rx.commands.try_recv().unwrap());
+    apps.requests();
+    reactor.handle_event(Event::MouseUp(crate::actor::drag::MouseButton::Left));
+    assert!(
+        rx.commands.try_recv().is_err(),
+        "ordinary release must not retarget the animation"
+    );
+    manager.tick_at(std::time::Instant::now() + std::time::Duration::from_secs(1));
+    let mut final_frame = None;
+    for request in apps.requests() {
+        if let Request::InteractiveFramesPending(queue) = request {
+            queue.drain_with(|wid, frame, _, _, _, _| {
+                if wid == window {
+                    final_frame = Some(frame);
+                }
+            });
+        }
+    }
+    assert!(final_frame.expect("scroll must finish").same_as(target));
+}
+
+#[test]
 fn cross_display_drag_clears_source_floating_position() {
     let (mut reactor, wid, _wsid, space1, space2, initial_frame, screen2) =
         reactor_with_window_on_space1_two_displays();

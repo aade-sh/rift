@@ -66,7 +66,7 @@ pub fn handle_mouse_up(
     drag: &mut DragManager,
     payload: MouseUpPayload,
 ) -> anyhow::Result<EventOutcome> {
-    let mut outcome = EventOutcome::layout_changed(false);
+    let mut outcome = EventOutcome::no_change();
     let Some(commit) = drag.actor.finish(payload.button) else {
         return Ok(outcome);
     };
