@@ -211,6 +211,11 @@ impl Popup {
         menu.ns_menu().insertItem_atIndex(header.ns_menu_item(), 0);
         let mut popup = Self::new(ui);
         popup.native.setPullsDown(true);
+        if let Some(cell) =
+            popup.native.cell().and_then(|cell| cell.downcast::<NSPopUpButtonCell>().ok())
+        {
+            cell.setArrowPosition(NSPopUpArrowPosition::NoArrow);
+        }
         popup.native.setMenu(Some(menu.ns_menu()));
         popup.native.setControlSize(NSControlSize::Small);
         popup.accessibility_label(label);

@@ -292,7 +292,7 @@ pub struct Table<T: 'static> {
     bridge: Retained<CollectionBridge>,
     rows: Rc<RefCell<Vec<T>>>,
     double: Retained<ActionTarget>,
-    menu: Option<crate::Menu>,
+    menu: RefCell<Option<crate::Menu>>,
 }
 impl<T: 'static> Table<T> {
     pub fn new(ui: &Ui) -> Self {
@@ -324,7 +324,7 @@ impl<T: 'static> Table<T> {
         let view: Retained<NSView> = native.clone().into_super().into_super();
         let scroll = ScrollView::new(ui, view);
         scroll.ns_scroll_view().setDrawsBackground(true);
-        scroll.ns_scroll_view().setBorderType(NSBorderType::LineBorder);
+        scroll.ns_scroll_view().setBorderType(NSBorderType::NoBorder);
         {
             let r = rows.clone();
             *bridge.ivars().reorder.borrow_mut() = Some(Box::new(move |from, to| {
@@ -337,7 +337,7 @@ impl<T: 'static> Table<T> {
                 bridge,
                 rows,
                 double,
-                menu: None,
+                menu: RefCell::new(None),
             }
         }
     }
@@ -425,12 +425,35 @@ impl<T: 'static> Table<T> {
         self
     }
 
-    pub fn context_menu(mut self, menu: crate::Menu) -> Self {
+    pub fn context_menu(self, menu: crate::Menu) -> Self {
+        self.set_context_menu(menu);
+        self
+    }
+
+    pub fn set_context_menu(&self, menu: crate::Menu) {
+        let table = objc2::rc::Weak::new(&*self.native);
+        let native_menu = objc2::rc::Weak::new(menu.ns_menu());
+        let menu = menu.on_tracking(move |opening| {
+            if !opening {
+                return;
+            }
+            if let (Some(table), Some(menu)) = (table.load(), native_menu.load()) {
+                let row = table.clickedRow();
+                if row >= 0 {
+                    table.selectRowIndexes_byExtendingSelection(
+                        &NSIndexSet::indexSetWithIndex(row as usize),
+                        false,
+                    );
+                }
+                for item in menu.itemArray() {
+                    item.setEnabled(row >= 0);
+                }
+            }
+        });
         unsafe {
             self.native.setMenu(Some(menu.ns_menu()));
         }
-        self.menu = Some(menu);
-        self
+        *self.menu.borrow_mut() = Some(menu);
     }
 
     pub fn reorderable(self, value: bool) -> Self {

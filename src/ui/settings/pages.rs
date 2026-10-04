@@ -216,8 +216,8 @@ fn layout(ui: Ui, model: &Rc<Model>) -> Page {
             }
         }
     }));
-    let section = Section::new(&ui, "Outer gaps")
-        .description("Blank means the sides differ. Entering a value links all four sides.")
+    let section = Section::subsection(&ui, "Outer gaps")
+        .description("Leave blank to set each side separately.")
         .row(f.text(
             "All sides (points)",
             |s| {
@@ -265,8 +265,8 @@ fn layout(ui: Ui, model: &Rc<Model>) -> Page {
             |s| s.settings.layout.gaps.outer.right,
             |s, v| s.settings.layout.gaps.outer.right = v,
         ));
-    page = page.section(section.row(Disclosure::new(&ui, "Customize sides", sides)));
-    let section = Section::new(&ui, "Inner gaps")
+    page = page.section(section.content(Disclosure::new(&ui, "Customize sides", sides)));
+    let section = Section::subsection(&ui, "Inner gaps")
         .row(f.number(
             "Horizontal (points)",
             1.0,
@@ -584,7 +584,7 @@ fn input(ui: Ui, model: &Rc<Model>) -> Page {
             |s| s.settings.gestures.haptic_pattern,
             |s, v| s.settings.gestures.haptic_pattern = v,
         ));
-    page = page.section(section.row(Disclosure::new(&ui, "Advanced swipe settings", tuning)));
+    page = page.section(section.content(Disclosure::new(&ui, "Advanced swipe settings", tuning)));
     let section = Section::new(&ui, "Scrolling layout gestures")
         .description("These gestures navigate the Scrolling layout strip.")
         .row(f.switch(
@@ -907,7 +907,7 @@ fn advanced(ui: Ui, model: &Rc<Model>) -> Page {
     page = page.section(
         Section::new(&ui, "Configuration file")
             .description(&path.to_string_lossy())
-            .row(actions.push(reload))
+            .content(actions.push(reload))
             .footer(message),
     );
     f.finish(page)
@@ -1063,6 +1063,6 @@ fn focus_suspend(f: &mut FormBuilder) -> Section {
         .description("Record either a shortcut or modifiers. Recording one replaces the other.")
         .row(SettingsRow::new(&ui, "Shortcut", recorder))
         .row(SettingsRow::new(&ui, "Modifiers only", modifier_recorder))
-        .row(clear)
+        .content(clear)
         .footer(message)
 }

@@ -177,6 +177,14 @@ impl Sheet {
         }
     }
 
+    /// Size a small editor from its Auto Layout content, rather than Window's default frame.
+    pub fn fit_content(&self) {
+        if let Some(content) = self.window.ns_window().contentView() {
+            content.layoutSubtreeIfNeeded();
+            self.window.ns_window().setContentSize(content.fittingSize());
+        }
+    }
+
     pub fn show(&self, parent: &NSWindow) {
         *self.parent.borrow_mut() = Weak::new(parent);
         parent.beginSheet_completionHandler(self.window.ns_window(), None);

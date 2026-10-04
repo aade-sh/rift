@@ -102,11 +102,9 @@ fn master<T: Clone + PartialEq + 'static>(
         }
     }));
     let detail = MasterDetail::new(&ui, VStack::new(&ui).push(list).push(message), host);
-    detail.min_height(260.0);
+    detail.min_height(180.0);
+    detail.hugging_priority(1.0, objc2_app_kit::NSLayoutConstraintOrientation::Vertical);
     let page = SettingsPage::new(&ui, title).section(detail).into_editor();
-    if title.is_empty() {
-        page.min_height(360.0);
-    }
     f.finish(page)
 }
 
@@ -227,8 +225,7 @@ pub(super) fn workspaces(ui: Ui, model: &Rc<Model>) -> Page {
                 },
             );
             f.finish(
-                SettingsPage::new(&ui, "Workspace")
-                    .section(Section::new(&ui, "").row(name).row(layout)),
+                SettingsPage::new(&ui, "").section(Section::new(&ui, "").row(name).row(layout)),
             )
         },
         |model, error| {
@@ -406,7 +403,7 @@ pub(super) fn rules(ui: Ui, model: &Rc<Model>) -> Page {
             );
             let sheet = Sheet::new(&ui, "Edit App Rule", content);
             sheet.ns_window().setContentSize(CGSize::new(600.0, 620.0));
-            if let Some(window) = NSApplication::sharedApplication(ui.mtm()).keyWindow() {
+            if let Some(window) = model.window.borrow().load() {
                 sheet.show(&window);
                 *model.sheet.borrow_mut() = Some(sheet);
                 *editor.borrow_mut() = Some(page);
@@ -449,16 +446,20 @@ pub(super) fn rules(ui: Ui, model: &Rc<Model>) -> Page {
                 }
             }),
     );
-    table.min_height(160.0);
+    table.min_height(80.0);
+    let preferred = table.ns_view().heightAnchor().constraintGreaterThanOrEqualToConstant(160.0);
+    preferred.setPriority(750.0);
+    preferred.setActive(true);
     let axis = objc2_app_kit::NSLayoutConstraintOrientation::Vertical;
     table.ns_view().setContentHuggingPriority_forOrientation(1.0, axis);
     table
         .ns_view()
         .setContentCompressionResistancePriority_forOrientation(1.0, axis);
     let weak_table = Rc::downgrade(&table);
+    let edit_action = edit_rule.clone();
     let edit = IconButton::new(&ui, "pencil", "Edit Rule…").on_click(move || {
         if let Some(index) = weak_table.upgrade().and_then(|table| table.selection()) {
-            edit_rule(index);
+            edit_action(index);
         }
     });
     let weak = Rc::downgrade(model);
@@ -471,7 +472,7 @@ pub(super) fn rules(ui: Ui, model: &Rc<Model>) -> Page {
     let weak = Rc::downgrade(model);
     let weak_table = Rc::downgrade(&table);
     let error = Rc::downgrade(&message);
-    let controls = Rc::new(controls.on_remove(move || {
+    let remove_rule: Rc<dyn Fn()> = Rc::new(move || {
         if let Some(index) = weak_table.upgrade().and_then(|table| table.selection()) {
             FormBuilder::submit(
                 &weak,
@@ -484,7 +485,19 @@ pub(super) fn rules(ui: Ui, model: &Rc<Model>) -> Page {
                 error.clone(),
             );
         }
-    }));
+    });
+    let action = remove_rule.clone();
+    let controls = Rc::new(controls.on_remove(move || action()));
+    let weak_table = Rc::downgrade(&table);
+    table.set_context_menu(
+        Menu::new(&ui)
+            .item(MenuItem::new(&ui, "Edit Rule…").on_click(move || {
+                if let Some(index) = weak_table.upgrade().and_then(|table| table.selection()) {
+                    edit_rule(index);
+                }
+            }))
+            .item(MenuItem::new(&ui, "Remove").on_click(move || remove_rule())),
+    );
     controls.set_remove_enabled(false);
     edit.set_enabled(false);
     let weak_controls = Rc::downgrade(&controls);
@@ -594,10 +607,11 @@ fn add_rule(ui: Ui, model: &Rc<Model>, error: Weak<ValidationMessage>) {
         .push(Label::new(&ui, "Bundle identifier"))
         .push(input)
         .push(HStack::new(&ui).spacer(&ui).push(cancel).push(button));
+    content.min_width(380.0);
     let native = Sheet::new(&ui, "Add Rule", content);
-    if let Some(window) = NSApplication::sharedApplication(ui.mtm()).keyWindow() {
+    native.fit_content();
+    if let Some(window) = model.window.borrow().load() {
         native.show(&window);
-        native.ns_window().setContentSize(CGSize::new(380.0, 150.0));
         *model.sheet.borrow_mut() = Some(native);
     }
 }
@@ -658,7 +672,7 @@ fn rule_detail(ui: Ui, model: &Rc<Model>, i: usize) -> Page {
             },
         );
         matches = if field >= 3 {
-            matches.row(Disclosure::new(&ui, title, row))
+            matches.content(Disclosure::new(&ui, title, row))
         } else {
             matches.row(row)
         };
@@ -831,8 +845,8 @@ pub(super) fn strings(
         }
     }));
     Section::new(&ui, title)
-        .row(list)
-        .row(HStack::new(&ui).push(field).push(add))
+        .content(list)
+        .content(HStack::new(&ui).push(field).push(add))
         .footer(message)
 }
 
@@ -870,9 +884,9 @@ pub(super) fn display_overrides(
     if displays.is_empty() {
         return page;
     }
-    let mut section = Section::new(&ui, "Per-display overrides").description("Blank values use the global default. Display identifiers come from Rift’s display inventory.");
+    let mut section = Section::new(&ui, "Per-display overrides");
     for (uuid, name) in displays {
-        let mut rows = VStack::new(&ui).push(Caption::new(&ui, &uuid));
+        let mut rows = Section::new(&ui, "");
         for (title, field) in [
             ("Column width (%)", 0),
             ("Minimum width (%)", 1),
@@ -880,7 +894,7 @@ pub(super) fn display_overrides(
         ] {
             let id = uuid.clone();
             let edit_id = uuid.clone();
-            rows = rows.push(f.text(
+            rows = rows.row(f.text(
                 title,
                 move |s| {
                     s.settings
@@ -1008,14 +1022,14 @@ pub(super) fn display_overrides(
                 }
             }));
             rows = rows
-                .push(SectionTitle::new(
+                .content(SubsectionTitle::new(
                     &ui,
                     if outer { "Outer gaps" } else { "Inner gaps" },
                 ))
-                .push(row)
-                .push(message);
+                .content(row)
+                .content(message);
         }
-        section = section.row(Disclosure::new(&ui, &name, rows));
+        section = section.content(Disclosure::new(&ui, &name, rows));
     }
     page.section(section)
 }

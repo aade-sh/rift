@@ -146,10 +146,11 @@ pub struct Grid {
 }
 impl Grid {
     pub fn new(ui: &Ui) -> Self {
-        Self {
-            native: NSGridView::new(ui.mtm()),
-            children: Vec::new(),
-        }
+        let native = NSGridView::new(ui.mtm());
+        prepare(&native);
+        native.setXPlacement(NSGridCellPlacement::Leading);
+        native.setYPlacement(NSGridCellPlacement::Center);
+        Self { native, children: Vec::new() }
     }
 
     pub fn row(mut self, cells: Vec<Box<dyn NativeView>>) -> Self {

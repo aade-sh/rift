@@ -28,6 +28,7 @@ struct Model {
     requests: UnboundedSender<Request>,
     syncing: Cell<bool>,
     sheet: RefCell<Option<Sheet>>,
+    window: RefCell<objc2::rc::Weak<objc2_app_kit::NSWindow>>,
     displays: RefCell<Vec<crate::sys::screen::ScreenInfo>>,
     config_path: std::path::PathBuf,
 }
@@ -59,6 +60,7 @@ impl Settings {
             requests,
             syncing: Cell::new(false),
             sheet: RefCell::new(None),
+            window: RefCell::new(objc2::rc::Weak::default()),
             displays: RefCell::new(displays),
             config_path,
         });
@@ -104,6 +106,7 @@ impl Settings {
             sidebar,
             host.clone(),
         ));
+        *model.window.borrow_mut() = objc2::rc::Weak::new(window.ns_window());
         window.ns_window().setContentSize(CGSize::new(880.0, 660.0));
         window.ns_window().center();
         Self::select(ui, &model, &host, &pages, 0);
@@ -230,7 +233,19 @@ impl FormBuilder {
         control: impl NativeView,
         message: Rc<ValidationMessage>,
     ) -> SettingsRow {
-        SettingsRow::with_validation(&self.ui, title, control, message)
+        let (title, suffix) = if let Some(title) = title.strip_suffix(" (%)") {
+            (title, Some("%"))
+        } else if let Some(title) = title.strip_suffix(" (points)") {
+            (title, Some("pt"))
+        } else {
+            (title, None)
+        };
+        let row = SettingsRow::with_validation(&self.ui, title, control, message);
+        if let Some(suffix) = suffix {
+            row.suffix(suffix)
+        } else {
+            row
+        }
     }
 
     fn switch(
@@ -320,7 +335,7 @@ impl FormBuilder {
                 );
             }),
         );
-        input.width(80.0);
+        input.min_width(60.0);
         let weak = Rc::downgrade(&input);
         self.sync.push(Box::new(move |s| {
             if let Some(input) = weak.upgrade() {
@@ -404,12 +419,8 @@ impl FormBuilder {
         self.row(title, input, message)
     }
 
-    fn enabled(
-        &mut self,
-        row: &impl NativeView,
-        enabled: impl Fn(&ConfigSource) -> bool + 'static,
-    ) {
-        let view = objc2::rc::Weak::new(row.ns_view());
+    fn enabled(&mut self, row: &SettingsRow, enabled: impl Fn(&ConfigSource) -> bool + 'static) {
+        let view = objc2::rc::Weak::new(row.control_view());
         self.sync.push(Box::new(move |s| {
             fn apply(view: &objc2_app_kit::NSView, value: bool) {
                 if let Some(control) = view.downcast_ref::<objc2_app_kit::NSControl>() {

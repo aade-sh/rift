@@ -201,6 +201,17 @@ fn glyphs(key: &str, s: &ConfigSource) -> String {
                 "Shift" => "⇧",
                 "Ctrl" | "Control" => "⌃",
                 "Meta" | "Cmd" | "Command" => "⌘",
+                "Left" | "ArrowLeft" => "←",
+                "Right" | "ArrowRight" => "→",
+                "Up" | "ArrowUp" => "↑",
+                "Down" | "ArrowDown" => "↓",
+                "Comma" => ",",
+                "Slash" => "/",
+                "Equal" => "=",
+                "Minus" => "−",
+                "Enter" | "Return" => "↩",
+                "Tab" => "⇥",
+                "Space" => "␣",
                 value => value,
             })
             .collect::<Vec<_>>()
@@ -237,7 +248,7 @@ pub(super) fn keyboard(ui: Ui, model: &Rc<Model>) -> Page {
     let mut f = FormBuilder::new(ui, model);
     let mode = Rc::new(RefCell::new("default".to_string()));
     let table = Table::<(String, String)>::new(&ui)
-        .column("shortcut", "Shortcut", 140.0)
+        .column("shortcut", "Shortcut", 110.0)
         .column("action", "Action", 360.0)
         .cells(move |(key, action), column| {
             Box::new(Label::new(&ui, if column == 0 { key } else { action }))
@@ -255,7 +266,10 @@ pub(super) fn keyboard(ui: Ui, model: &Rc<Model>) -> Page {
     });
     let action = edit_binding.clone();
     let table = Rc::new(table.on_double_click(move |i| action(i)));
-    table.min_height(160.0);
+    table.min_height(80.0);
+    let preferred = table.ns_view().heightAnchor().constraintGreaterThanOrEqualToConstant(160.0);
+    preferred.setPriority(750.0);
+    preferred.setActive(true);
     table.ns_view().setContentCompressionResistancePriority_forOrientation(
         1.0,
         objc2_app_kit::NSLayoutConstraintOrientation::Vertical,
@@ -321,9 +335,10 @@ pub(super) fn keyboard(ui: Ui, model: &Rc<Model>) -> Page {
         }
     });
     let weak_table = Rc::downgrade(&table);
+    let edit_action = edit_binding.clone();
     let edit = IconButton::new(&ui, "pencil", "Edit Shortcut…").on_click(move || {
         if let Some(i) = weak_table.upgrade().and_then(|table| table.selection()) {
-            edit_binding(i);
+            edit_action(i);
         }
     });
     let error = Rc::new(ValidationMessage::new(&ui));
@@ -331,7 +346,7 @@ pub(super) fn keyboard(ui: Ui, model: &Rc<Model>) -> Page {
     let weak_model = Rc::downgrade(model);
     let weak_table = Rc::downgrade(&table);
     let selected_mode = mode.clone();
-    let controls = Rc::new(controls.on_remove(move || {
+    let remove_binding: Rc<dyn Fn()> = Rc::new(move || {
         if let (Some(model), Some(table)) = (weak_model.upgrade(), weak_table.upgrade()) {
             if let Some(i) = table.selection() {
                 let name = selected_mode.borrow().clone();
@@ -349,7 +364,35 @@ pub(super) fn keyboard(ui: Ui, model: &Rc<Model>) -> Page {
                 }
             }
         }
-    }));
+    });
+    let action = remove_binding.clone();
+    let controls = Rc::new(controls.on_remove(move || action()));
+    let weak_table = Rc::downgrade(&table);
+    let duplicate_table = Rc::downgrade(&table);
+    let duplicate_model = Rc::downgrade(model);
+    let duplicate_mode = mode.clone();
+    let menu = Menu::new(&ui)
+        .item(MenuItem::new(&ui, "Edit Shortcut…").on_click(move || {
+            if let Some(index) = weak_table.upgrade().and_then(|table| table.selection()) {
+                edit_binding(index);
+            }
+        }))
+        .item(MenuItem::new(&ui, "Duplicate").on_click(move || {
+            if let (Some(model), Some(table)) =
+                (duplicate_model.upgrade(), duplicate_table.upgrade())
+            {
+                let mode = duplicate_mode.borrow().clone();
+                let command = table.selection().and_then(|index| {
+                    keymap(&model.source.borrow(), &mode)
+                        .and_then(|map| map.values().nth(index).cloned())
+                });
+                if let Some(command) = command {
+                    binding_sheet(ui, &model, mode, None, command);
+                }
+            }
+        }))
+        .item(MenuItem::new(&ui, "Remove").on_click(move || remove_binding()));
+    table.set_context_menu(menu);
     controls.set_remove_enabled(false);
     edit.set_enabled(false);
     let weak_controls = Rc::downgrade(&controls);
@@ -432,6 +475,13 @@ fn save_sheet(model: &Weak<Model>, edit: SourceEdit, message: &Rc<ValidationMess
                         Err(e) => Validation::Error(e.clone()),
                     });
                 }
+                if result.is_err() {
+                    if let Some(model) = weak.upgrade() {
+                        if let Some(sheet) = model.sheet.borrow().as_ref() {
+                            sheet.fit_content();
+                        }
+                    }
+                }
                 if let (Some(model), Ok(source)) = (weak.upgrade(), result) {
                     *model.source.borrow_mut() = source;
                     if let Some(sheet) = model.sheet.borrow().as_ref() {
@@ -443,9 +493,10 @@ fn save_sheet(model: &Weak<Model>, edit: SourceEdit, message: &Rc<ValidationMess
     }
 }
 fn show_sheet(ui: Ui, model: &Rc<Model>, title: &str, content: impl NativeView) {
-    if let Some(window) = NSApplication::sharedApplication(ui.mtm()).keyWindow() {
+    if let Some(window) = model.window.borrow().load() {
+        content.min_width(460.0);
         let sheet = Sheet::new(&ui, title, content);
-        sheet.ns_window().setContentSize(CGSize::new(560.0, 400.0));
+        sheet.fit_content();
         sheet.show(&window);
         *model.sheet.borrow_mut() = Some(sheet);
     }
@@ -495,6 +546,12 @@ fn binding_sheet(ui: Ui, model: &Rc<Model>, mode: String, old: Option<String>, c
                 *edited.borrow_mut() = templates[i].clone();
                 if let (Some(host), Some(model)) = (weak_host.upgrade(), weak_model.upgrade()) {
                     host.set_page(argument_editor(ui, &model, &edited));
+                    if let Some(window) = host.ns_view().window() {
+                        if let Some(content) = window.contentView() {
+                            content.layoutSubtreeIfNeeded();
+                            window.setContentSize(content.fittingSize());
+                        }
+                    }
                 }
             });
     popup.set_selected(current);
@@ -507,6 +564,11 @@ fn binding_sheet(ui: Ui, model: &Rc<Model>, mode: String, old: Option<String>, c
         };
         let Some(key) = key.borrow().clone() else {
             message.set_validation(&Validation::Error("Record a shortcut first".into()));
+            if let Some(model) = weak_model.upgrade() {
+                if let Some(sheet) = model.sheet.borrow().as_ref() {
+                    sheet.fit_content();
+                }
+            }
             return;
         };
         let cmd = draft.borrow().clone();
@@ -539,17 +601,20 @@ fn binding_sheet(ui: Ui, model: &Rc<Model>, mode: String, old: Option<String>, c
                 bottom: 20.0,
                 right: 20.0,
             })
-            .push(SettingsRow::new(&ui, "Shortcut", recorder))
-            .push(SettingsRow::new(&ui, "Action", popup))
+            .push(
+                Section::new(&ui, "")
+                    .row(SettingsRow::new(&ui, "Shortcut", recorder))
+                    .row(SettingsRow::new(&ui, "Action", popup)),
+            )
             .push(host)
             .push(message)
             .push(HStack::new(&ui).spacer(&ui).push(cancel_button(ui, model)).push(save)),
     );
 }
 
-fn argument_editor(ui: Ui, model: &Rc<Model>, draft: &Rc<RefCell<WmCommand>>) -> VStack {
+fn argument_editor(ui: Ui, model: &Rc<Model>, draft: &Rc<RefCell<WmCommand>>) -> Section {
     let command = draft.borrow().clone();
-    let mut view = VStack::new(&ui);
+    let mut view = Section::new(&ui, "");
     use WmCommand::{ReactorCommand as RcCommand, Wm};
     match command.clone() {
         RcCommand(Command::Layout(
@@ -577,7 +642,7 @@ fn argument_editor(ui: Ui, model: &Rc<Model>, draft: &Rc<RefCell<WmCommand>>) ->
                     };
                 });
             popup.set_selected(directions.iter().position(|v| *v == d).unwrap_or(0));
-            view = view.push(SettingsRow::new(&ui, "Direction", popup));
+            view = view.row(SettingsRow::new(&ui, "Direction", popup));
         }
         RcCommand(Command::Layout(L::ResizeWindowGrow(o) | L::ResizeWindowShrink(o))) => {
             let edited = draft.clone();
@@ -596,7 +661,7 @@ fn argument_editor(ui: Ui, model: &Rc<Model>, draft: &Rc<RefCell<WmCommand>>) ->
                         };
                 });
             popup.set_selected(values.iter().position(|v| *v == o).unwrap_or(0));
-            view = view.push(SettingsRow::new(&ui, "Orientation", popup));
+            view = view.row(SettingsRow::new(&ui, "Orientation", popup));
         }
         Wm(WmCmd::SwitchToWorkspace(target) | WmCmd::MoveWindowToWorkspace(target)) => {
             let names: Vec<_> =
@@ -624,7 +689,7 @@ fn argument_editor(ui: Ui, model: &Rc<Model>, draft: &Rc<RefCell<WmCommand>>) ->
                 });
             });
             popup.set_selected(initial);
-            view = view.push(SettingsRow::new(&ui, "Workspace", popup));
+            view = view.row(SettingsRow::new(&ui, "Workspace", popup));
         }
         RcCommand(Command::Layout(L::SetWorkspaceLayout { mode, workspace })) => {
             let values = super::pages::layouts();
@@ -637,7 +702,7 @@ fn argument_editor(ui: Ui, model: &Rc<Model>, draft: &Rc<RefCell<WmCommand>>) ->
                         layout(L::SetWorkspaceLayout { workspace, mode: modes[i] });
                 });
             popup.set_selected(selected);
-            view = view.push(SettingsRow::new(&ui, "Layout", popup));
+            view = view.row(SettingsRow::new(&ui, "Layout", popup));
         }
         RcCommand(Command::Reactor(
             R::FocusDisplay(target)
@@ -688,7 +753,7 @@ fn argument_editor(ui: Ui, model: &Rc<Model>, draft: &Rc<RefCell<WmCommand>>) ->
                 });
             });
             popup.set_selected(selected);
-            view = view.push(SettingsRow::new(&ui, "Display direction", popup));
+            view = view.row(SettingsRow::new(&ui, "Display direction", popup));
         }
         RcCommand(Command::Layout(
             L::ResizeWindowBy { amount }
@@ -707,11 +772,11 @@ fn argument_editor(ui: Ui, model: &Rc<Model>, draft: &Rc<RefCell<WmCommand>>) ->
                     _ => layout(L::AdjustMasterRatio(v)),
                 };
             });
-            view = view.push(SettingsRow::new(&ui, "Amount", input));
+            view = view.row(SettingsRow::new(&ui, "Amount", input));
         }
         RcCommand(Command::Layout(L::AdjustMasterCount { delta })) => {
             let edited = draft.clone();
-            view = view.push(SettingsRow::new(
+            view = view.row(SettingsRow::new(
                 &ui,
                 "Change in window count",
                 NumberField::new(&ui).integer().value(delta as f64).on_change(move |v| {
@@ -729,11 +794,11 @@ fn argument_editor(ui: Ui, model: &Rc<Model>, draft: &Rc<RefCell<WmCommand>>) ->
                 *edited.borrow_mut() = Wm(WmCmd::BindingMode(choices[i].clone()));
             });
             popup.set_selected(selected);
-            view = view.push(SettingsRow::new(&ui, "Keymap", popup));
+            view = view.row(SettingsRow::new(&ui, "Keymap", popup));
         }
         Wm(WmCmd::Exec(ExecCmd::String(text))) => {
             let edited = draft.clone();
-            view = view.push(SettingsRow::new(
+            view = view.row(SettingsRow::new(
                 &ui,
                 "Shell command",
                 TextField::new(&ui).value(&text).on_commit(move |v| {
@@ -742,7 +807,7 @@ fn argument_editor(ui: Ui, model: &Rc<Model>, draft: &Rc<RefCell<WmCommand>>) ->
             ));
         }
         _ => {
-            view = view.push(SecondaryLabel::new(
+            view = view.content(SecondaryLabel::new(
                 &ui,
                 "Existing arguments are retained. Choose another action to replace them.",
             ));

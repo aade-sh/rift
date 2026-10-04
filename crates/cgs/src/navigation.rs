@@ -1,6 +1,6 @@
 use objc2::rc::Retained;
 use objc2::runtime::ProtocolObject;
-use objc2::{MainThreadOnly, define_class, msg_send, sel};
+use objc2::{MainThreadOnly, define_class, msg_send};
 use objc2_app_kit::*;
 use objc2_foundation::{NSArray, NSObject, NSObjectProtocol, NSString};
 
@@ -161,31 +161,6 @@ define_class!(
             NSArray::from_slice(&[unsafe { NSToolbarToggleSidebarItemIdentifier }, unsafe {
                 NSToolbarFlexibleSpaceItemIdentifier
             }])
-        }
-
-        #[unsafe(method_id(toolbar:itemForItemIdentifier:willBeInsertedIntoToolbar:))]
-        fn item(
-            &self,
-            _toolbar: &NSToolbar,
-            identifier: &NSString,
-            _insert: bool,
-        ) -> Option<Retained<NSToolbarItem>> {
-            let item =
-                NSToolbarItem::initWithItemIdentifier(NSToolbarItem::alloc(self.mtm()), identifier);
-            if identifier == unsafe { NSToolbarToggleSidebarItemIdentifier } {
-                item.setLabel(&NSString::from_str("Toggle Sidebar"));
-                item.setImage(
-                    NSImage::imageWithSystemSymbolName_accessibilityDescription(
-                        &NSString::from_str("sidebar.left"),
-                        None,
-                    )
-                    .as_deref(),
-                );
-                unsafe {
-                    item.setAction(Some(sel!(toggleSidebar:)));
-                }
-            }
-            Some(item)
         }
     }
 );

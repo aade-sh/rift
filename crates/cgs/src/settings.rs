@@ -1,3 +1,4 @@
+use std::cell::OnceCell;
 use std::rc::Rc;
 
 use objc2::Message;
@@ -61,7 +62,9 @@ impl NativeView for Badge {
 
 pub struct SettingsRow {
     ui: Ui,
-    stack: VStack,
+    grid: OnceCell<Grid>,
+    label: VStack,
+    value: VStack,
     line: Rc<HStack>,
     control: Box<dyn NativeView>,
     validation: Rc<ValidationMessage>,
@@ -77,15 +80,16 @@ impl SettingsRow {
         control: impl NativeView,
         validation: Rc<ValidationMessage>,
     ) -> Self {
-        let label = WrappingLabel::new(ui, title);
-        let line = Rc::new(HStack::new(ui).push(label).spacer(ui));
+        let label = VStack::new(ui).spacing(4.0).push(WrappingLabel::new(ui, title));
+        let line = Rc::new(HStack::new(ui));
         control.accessibility_label(title);
         line.ns_stack_view().addArrangedSubview(control.ns_view());
-        let stack = VStack::new(ui).spacing(4.0).push(line.clone());
-        stack.ns_stack_view().addArrangedSubview(validation.ns_view());
+        let value = VStack::new(ui).spacing(4.0).push(line.clone()).push(validation.clone());
         Self {
             ui: *ui,
-            stack,
+            grid: OnceCell::new(),
+            label,
+            value,
             line,
             control: Box::new(control),
             validation,
@@ -93,7 +97,7 @@ impl SettingsRow {
     }
 
     pub fn description(self, text: &str) -> Self {
-        self.stack.add(SecondaryLabel::new(&self.ui, text));
+        self.label.add(SecondaryLabel::new(&self.ui, text));
         self
     }
 
@@ -105,9 +109,35 @@ impl SettingsRow {
     pub fn set_validation(&self, value: &Validation) { self.validation.set_validation(value); }
 
     pub fn control_view(&self) -> &NSView { self.control.ns_view() }
+
+    fn take_form_cells(&self) -> [&NSView; 2] {
+        if let Some(grid) = self.grid.get() {
+            if grid.ns_grid_view().numberOfRows() > 0 {
+                grid.ns_grid_view().removeRowAtIndex(0);
+            }
+        }
+        [self.label.ns_view(), self.value.ns_view()]
+    }
 }
 impl NativeView for SettingsRow {
-    fn ns_view(&self) -> &NSView { self.stack.ns_view() }
+    fn ns_view(&self) -> &NSView {
+        self.grid
+            .get_or_init(|| {
+                let grid = Grid::new(&self.ui).spacing(10.0, 20.0);
+                grid.ns_grid_view().addRowWithViews(&objc2_foundation::NSArray::from_slice(&[
+                    self.label.ns_view(),
+                    self.value.ns_view(),
+                ]));
+                grid.ns_grid_view()
+                    .columnAtIndex(0)
+                    .setXPlacement(objc2_app_kit::NSGridCellPlacement::Fill);
+                grid.ns_grid_view()
+                    .columnAtIndex(1)
+                    .setXPlacement(objc2_app_kit::NSGridCellPlacement::Trailing);
+                grid
+            })
+            .ns_view()
+    }
 }
 macro_rules! setting_row {
     ($name:ident) => {
@@ -128,6 +158,9 @@ macro_rules! setting_row {
         impl NativeView for $name {
             fn ns_view(&self) -> &NSView { self.0.ns_view() }
         }
+        impl From<$name> for SettingsRow {
+            fn from(row: $name) -> Self { row.0 }
+        }
     };
 }
 setting_row!(SwitchRow);
@@ -140,17 +173,31 @@ setting_row!(ButtonRow);
 pub type DisclosureRow = Disclosure;
 
 /// Compact preference content; AppKit controls provide their own appearance.
-pub struct SettingsGroup(VStack);
+pub struct SettingsGroup {
+    grid: Grid,
+    rows: Vec<SettingsRow>,
+}
 impl SettingsGroup {
-    pub fn new(ui: &Ui) -> Self { Self(VStack::new(ui).spacing(10.0)) }
+    pub fn new(ui: &Ui) -> Self {
+        Self {
+            grid: Grid::new(ui).spacing(10.0, 20.0),
+            rows: Vec::new(),
+        }
+    }
 
-    pub fn row(self, row: impl NativeView) -> Self {
-        self.0.add(row);
+    pub fn row(mut self, row: impl Into<SettingsRow>) -> Self {
+        let row = row.into();
+        let grid = self.grid.ns_grid_view();
+        grid.addRowWithViews(&objc2_foundation::NSArray::from_slice(&row.take_form_cells()));
+        grid.columnAtIndex(0).setXPlacement(objc2_app_kit::NSGridCellPlacement::Fill);
+        grid.columnAtIndex(1)
+            .setXPlacement(objc2_app_kit::NSGridCellPlacement::Trailing);
+        self.rows.push(row);
         self
     }
 }
 impl NativeView for SettingsGroup {
-    fn ns_view(&self) -> &NSView { self.0.ns_view() }
+    fn ns_view(&self) -> &NSView { self.grid.ns_view() }
 }
 
 pub struct Section {
@@ -176,7 +223,7 @@ impl Section {
         self
     }
 
-    pub fn row(mut self, row: impl NativeView) -> Self {
+    pub fn row(mut self, row: impl Into<SettingsRow>) -> Self {
         let group = self.group.take().unwrap_or_else(|| {
             let group = SettingsGroup::new(&self.ui);
             self.stack.ns_stack_view().addArrangedSubview(group.ns_view());
@@ -252,6 +299,7 @@ impl SettingsPage {
 
     /// Let a collection editor own the viewport; its table supplies scrolling.
     pub fn into_editor(self) -> EditorPage {
+        self.content.ns_stack_view().setSpacing(Metrics::CONTROL_SPACING);
         let native = self.scroll.content_view().retain();
         self.scroll.ns_scroll_view().setDocumentView(None);
         native.removeFromSuperview();
