@@ -378,6 +378,12 @@ pub(super) fn rules(ui: Ui, model: &Rc<Model>) -> Page {
                 sync(&model.source.borrow());
             }
             model.syncing.set(syncing);
+            page.view.min_height(360.0);
+            let axis = objc2_app_kit::NSLayoutConstraintOrientation::Vertical;
+            page.view.ns_view().setContentHuggingPriority_forOrientation(1.0, axis);
+            page.view
+                .ns_view()
+                .setContentCompressionResistancePriority_forOrientation(1.0, axis);
             let weak = Rc::downgrade(&model);
             let done = Button::new(&ui, "Done").key_equivalent("\r").on_click(move || {
                 if let Some(model) = weak.upgrade() {
@@ -388,6 +394,12 @@ pub(super) fn rules(ui: Ui, model: &Rc<Model>) -> Page {
             });
             let content = VStack::new(&ui).push(page.view.clone()).push(
                 HStack::new(&ui)
+                    .insets(Insets {
+                        top: 0.0,
+                        left: 20.0,
+                        bottom: 12.0,
+                        right: 20.0,
+                    })
                     .push(Caption::new(&ui, "Changes save automatically."))
                     .spacer(&ui)
                     .push(done),
@@ -581,7 +593,7 @@ fn add_rule(ui: Ui, model: &Rc<Model>, error: Weak<ValidationMessage>) {
         })
         .push(Label::new(&ui, "Bundle identifier"))
         .push(input)
-        .push(HStack::new(&ui).push(cancel).push(button));
+        .push(HStack::new(&ui).spacer(&ui).push(cancel).push(button));
     let native = Sheet::new(&ui, "Add Rule", content);
     if let Some(window) = NSApplication::sharedApplication(ui.mtm()).keyWindow() {
         native.show(&window);
